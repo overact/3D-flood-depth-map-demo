@@ -1,6 +1,6 @@
 # 3D-flood-depth-map-demo
-This is a 3D flood depth map demo in Kempsey
+This is an interactive **3D flood depth map** of Kempsey, NSW, Australia.
 
-Find the details in <a href="[https://daringfireball.net/projects/markdown/](https://doi.org/10.48550/arXiv.2507.07585)" target="_blank" rel="noopener">
-  HOTA: Hierarchical Overlap-Tiling Aggregation for Large-Area 3D Flood Mapping
-</a>
+**Method** – SegFormer + **HOTA** (Hierarchical Overlap-Tiling Aggregation) + 3D depth refinement module .  
+
+Find the details in [HOTA paper](https://doi.org/10.48550/arXiv.2507.07585)
