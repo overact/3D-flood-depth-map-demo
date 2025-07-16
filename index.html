@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Demo of 3D Flood Depth Map in Kempysey</title>
+<title>Demo of 3D Flood Depth Map of Kempysey</title>
 <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
 <base target="_blank">
 <link rel="stylesheet" type="text/css" href="./Qgis2threejs.css">
@@ -10,6 +10,7 @@
 <script src="./threejs/OrbitControls.js"></script>
 <script src="./threejs/ViewHelper.js"></script>
 <script src="./proj4js/proj4.js"></script>
+<script src="./tweenjs/tween.js"></script>
 <script src="./Qgis2threejs.js"></script>
 <script src="./dat-gui/dat.gui.min.js"></script>
 <script src="./dat-gui_panel.js"></script>
@@ -87,11 +88,12 @@
 <div id="progress"><div id="progressbar"></div></div>
 
 <!-- header and footer -->
-<div id="header">Created by Wenfeng Jia @CSU <br>
+<div id="header">Created by Wenfeng Jia @CSU<br>
 Email: wjia@csu.edu.au</div>
-<div id="footer">Reference: <a href="https://doi.org/10.48550/arXiv.2507.07585"
+<div id="footer">Cite the paper: <a href="https://doi.org/10.48550/arXiv.2507.07585"
               target="_blank" rel="noopener">
-              https://doi.org/10.48550/arXiv.2507.07585</div>
+              https://doi.org/10.48550/arXiv.2507.07585
+  </a></div>
 
 <!-- animation -->
 <div id="narrativebox" class="ef1">
@@ -104,9 +106,10 @@ Email: wjia@csu.edu.au</div>
 <script>
 Q3D.Config.bgColor = 0xffffff;
 Q3D.Config.coord.latlon = true;
-Q3D.Config.viewpoint = {lookAt:{x:17027501.045522194,y:-3635942.5547814555,z:12.901014907549216},pos:{x:17027792.913956046,y:-3654926.905330784,z:1816.212203997019}};
+Q3D.Config.viewpoint = {lookAt:{x:17023665.0,y:-3634079.5289436853,z:0.0},pos:{x:17023665.0,y:-3636082.0976021434,z:2002.5686584577118}};
 Q3D.Config.localMode = true;
 Q3D.Config.gui.customPlane = true;
+Q3D.Config.animation.enabled = true;
 Q3D.Config.northArrow.enabled = true;
 Q3D.Config.northArrow.color = 0x666666;
 
