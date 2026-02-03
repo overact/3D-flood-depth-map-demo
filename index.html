@@ -106,10 +106,15 @@ Email: wjia@csu.edu.au</div>
 <script>
 Q3D.Config.bgColor = 0xffffff;
 Q3D.Config.coord.latlon = true;
-Q3D.Config.viewpoint = {lookAt:{x:17023665.0,y:-3634079.5289436853,z:0.0},pos:{x:17023665.0,y:-3636082.0976021434,z:2002.5686584577118}};
+// viewpoint: lookAt = scene center; pos = camera. Tilt ~30° from vertical for oblique 3D view
+Q3D.Config.viewpoint = {
+  lookAt: { x: 17023665.0, y: -3636532.0, z: 0.0 },
+  pos:    { x: 17023665.0*0.999, y: -3636532.0*0.99, z: 1500.0 }
+};
 Q3D.Config.localMode = true;
 Q3D.Config.gui.customPlane = true;
 Q3D.Config.animation.enabled = true;
+Q3D.Config.animation.startOnLoad = false; // Keyframe animation off by default; use orbit auto-rotate instead
 Q3D.Config.northArrow.enabled = true;
 Q3D.Config.northArrow.color = 0x666666;
 
@@ -123,6 +128,9 @@ app.init(container);    // initialize viewer
 app.loadSceneFile("./data/index/scene.js", function (scene) {
   // scene file has been loaded
   app.start();
+
+  // Auto orbit rotation around scene center after load (user can still rotate/pan/zoom; press R to toggle)
+  if (app.controls) app.animation.orbit.start();
 
   gui.dat.initLayersFolder(scene);
 

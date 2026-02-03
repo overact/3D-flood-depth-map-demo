@@ -745,8 +745,13 @@ Q3D.E = function (id) {
 		if (app.animation.isActive) {
 			requestAnimationFrame(app.animate);
 
-			if (app.animation.keyframes.isActive) TWEEN.update();
-			else if (app.controls.enabled) app.controls.update();
+			if (app.animation.keyframes.isActive) {
+				TWEEN.update();
+				// Allow rotate/pan/zoom while keyframe animation plays (apply user input after animation)
+				if (app.controls && app.controls.enabled) app.controls.update();
+			} else if (app.controls && app.controls.enabled) {
+				app.controls.update();
+			}
 		}
 		else if (app.viewHelper && app.viewHelper.animating) {
 			requestAnimationFrame(app.animate);
