@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Flood viewer — asset self-check</title>
+<style>
+  body { margin: 0; padding: 18px 22px; background: #14181d; color: #d7dde4;
+         font: 13.5px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  h1 { font-size: 16px; margin: 0 0 4px; color: #9ecae1; letter-spacing: .04em; }
+  .sub { color: #7d8894; margin-bottom: 14px; }
+  table { border-collapse: collapse; margin: 10px 0 18px; }
+  td, th { padding: 3px 12px 3px 0; text-align: left; vertical-align: top;
+           white-space: pre; font-variant-numeric: tabular-nums; }
+  th { color: #7d8894; font-weight: 600; border-bottom: 1px solid #2b333c; }
+  .ok   { color: #7ddc9a; }
+  .bad  { color: #ff8f7a; font-weight: 700; }
+  .warn { color: #ffcf6b; }
+  h2 { font-size: 13.5px; color: #6baed6; margin: 20px 0 2px; letter-spacing: .06em;
+       text-transform: uppercase; }
+  #verdict { margin: 18px 0; padding: 12px 14px; border-radius: 8px; font-size: 15px;
+             background: #1d242b; border: 1px solid #2b333c; }
+</style>
+</head>
+<body>
+<h1>Kempsey 3D Flood Viewer — asset self-check</h1>
+<div class="sub">Loads every asset the viewer needs and reports exactly what came back.
+Screenshot this whole page.</div>
+<div id="verdict">running…</div>
+<div id="out"></div>
+
+<script type="module">
+const out = document.getElementById('out');
+const verdict = document.getElementById('verdict');
+const problems = [];
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+function section(title, rows) {
+  const t = ['<h2>' + esc(title) + '</h2><table>'];
+  for (const r of rows) {
+    t.push('<tr><th>' + esc(r[0]) + '</th><td class="' + (r[2] || '') + '">' + esc(r[1]) + '</td></tr>');
+  }
+  out.insertAdjacentHTML('beforeend', t.join('') + '</table>');
+}
+const hex = (u8, n = 4) => Array.from(u8.slice(0, n)).map((b) => b.toString(16).padStart(2, '0')).join(' ');
+
+async function grab(url, mode) {
+  const res = await fetch(url, mode ? { cache: mode } : undefined);
+  const raw = new Uint8Array(await res.arrayBuffer());
+  return {
+    status: res.status,
+    type: res.headers.get('content-type') || '(none)',
+    enc: res.headers.get('content-encoding') || '(none)',
+    len: res.headers.get('content-length') || '(none)',
+    raw,
+  };
+}
+async function inflate(raw) {
+  if (!(raw.length > 2 && raw[0] === 0x1f && raw[1] === 0x8b)) return { gz: false, bytes: raw };
+  const r = new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('gzip')));
+  return { gz: true, bytes: new Uint8Array(await r.arrayBuffer()) };
+}
+
+const FILE_PROTO = location.protocol === 'file:';
+if (FILE_PROTO) {
+  verdict.innerHTML = '<span class="warn">This page was opened as a local file.</span> Browsers block '
+    + '<code>fetch()</code> entirely under <code>file://</code>, so the asset checks below cannot run — '
+    + 'that is a browser security rule, not a fault in the viewer. Start the server '
+    + '(<b>start_viewer.bat</b>) and open <b>http://localhost:8123/check.html</b> instead. '
+    + 'The image and WebGL checks still work and are shown below.';
+}
+
+// Fallback geometry, used only when meta.json cannot be fetched (file:// case).
+const META_FALLBACK = {
+  grid: { nx: 1536, ny: 1426 }, wsurfGrid: { nx: 384, ny: 357 },
+  elev: { min: -12, max: 340 }, need: { min: -8, max: 8, never: 65535 },
+  stats: { observedAreaKm2: 188.97, observedVolumeMm3: 138.04,
+           cellX: 25.540364583333332, cellY: 25.535886959808906,
+           mercatorAreaFactor: 0.7334927803778298 },
+};
+
+try {
+  section('environment', [
+    ['location', location.href],
+    ['userAgent', navigator.userAgent],
+    ['DecompressionStream', typeof DecompressionStream === 'function' ? 'yes' : 'MISSING',
+      typeof DecompressionStream === 'function' ? 'ok' : 'bad'],
+    ['hardwareConcurrency', navigator.hardwareConcurrency || '?'],
+    ['devicePixelRatio', String(devicePixelRatio)],
+    ['screen', screen.width + ' x ' + screen.height],
+  ]);
+  if (typeof DecompressionStream !== 'function') problems.push('DecompressionStream missing');
+
+  // ---- WebGL ----
+  const cv = document.createElement('canvas');
+  const gl = cv.getContext('webgl2');
+  if (!gl) {
+    section('webgl', [['webgl2', 'NOT AVAILABLE', 'bad']]);
+    problems.push('no WebGL2');
+  } else {
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    const fl = !!gl.getExtension('OES_texture_float_linear');
+    section('webgl', [
+      ['webgl2', 'yes', 'ok'],
+      ['renderer', dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '(hidden)'],
+      ['MAX_TEXTURE_SIZE', String(gl.getParameter(gl.MAX_TEXTURE_SIZE))],
+      ['OES_texture_float_linear', fl ? 'yes' : 'NO — data textures fall back to NEAREST', fl ? 'ok' : 'warn'],
+      ['EXT_color_buffer_half_float', gl.getExtension('EXT_color_buffer_half_float') ? 'yes' : 'no'],
+    ]);
+  }
+
+  // ---- meta ----
+  let meta = META_FALLBACK, metaNote = 'loaded from data3d/meta.json';
+  if (FILE_PROTO) {
+    metaNote = 'NOT loaded — fetch() is blocked under file://; using built-in defaults';
+  } else {
+    const metaRes = await fetch('./data3d/meta.json', { cache: 'reload' });
+    if (!metaRes.ok) throw new Error('meta.json HTTP ' + metaRes.status);
+    meta = await metaRes.json();
+  }
+  const N = meta.grid.nx * meta.grid.ny;
+  const NW = meta.wsurfGrid.nx * meta.wsurfGrid.ny;
+  section('meta.json', [
+    ['grid', meta.grid.nx + ' x ' + meta.grid.ny + '  = ' + N.toLocaleString() + ' cells'],
+    ['wsurfGrid', meta.wsurfGrid.nx + ' x ' + meta.wsurfGrid.ny],
+    ['elev range', meta.elev.min + ' .. ' + meta.elev.max],
+    ['need range', meta.need.min + ' .. ' + meta.need.max + '   sentinel ' + meta.need.never],
+    ['baseline area', meta.stats.observedAreaKm2.toFixed(2) + ' km²'],
+    ['source', metaNote, FILE_PROTO ? 'warn' : 'ok'],
+  ]);
+
+  // ---- rasters (PNG, via the image decoder — the same path the viewer uses) ----
+  const IMGS = [
+    ['terrain.png', meta.grid.nx, meta.grid.ny],
+    ['need.png', meta.grid.nx, meta.grid.ny],
+    ['wsurf.png', meta.wsurfGrid.nx, meta.wsurfGrid.ny],
+  ];
+  const decoded = {};
+  for (const [name, w, h] of IMGS) {
+    const rows = [];
+    let img;
+    try {
+      img = await new Promise((res, rej) => {
+        const e = new Image();
+        e.onload = () => res(e);
+        e.onerror = () => rej(new Error('image load/decode failed'));
+        e.src = './data3d/' + name + '?v=4';
+      });
+    } catch (e) {
+      rows.push(['load', 'FAILED: ' + e.message, 'bad']);
+      problems.push(name + ': image failed to load');
+      section(name, rows);
+      continue;
+    }
+    rows.push(['decoded size', img.naturalWidth + ' x ' + img.naturalHeight + '   expected ' + w + ' x ' + h,
+      (img.naturalWidth === w && img.naturalHeight === h) ? 'ok' : 'bad']);
+    if (img.naturalWidth !== w || img.naturalHeight !== h) problems.push(name + ': wrong dimensions');
+
+    let src = img;
+    try { src = await createImageBitmap(img, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' }); } catch (e) {}
+    const cv = document.createElement('canvas');
+    cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+    const ctx = cv.getContext('2d', { willReadFrequently: true, colorSpace: 'srgb' });
+    ctx.drawImage(src, 0, 0);
+    const px = ctx.getImageData(0, 0, cv.width, cv.height).data;
+    rows.push(['readback bytes', px.length.toLocaleString(),
+      px.length === cv.width * cv.height * 4 ? 'ok' : 'bad']);
+
+    let lo = 65536, hi = -1;
+    for (let p = 0; p < px.length; p += 28) { const val = (px[p] << 8) | px[p + 1]; if (val < lo) lo = val; if (val > hi) hi = val; }
+    const E = name.startsWith('need') ? meta.need : meta.elev;
+    const k = (E.max - E.min) / 65535;
+    rows.push(['raw u16 min/max', lo + ' / ' + hi]);
+    rows.push(['decoded min/max', (E.min + lo * k).toFixed(2) + ' / ' + (E.min + hi * k).toFixed(2) + ' m']);
+    if (lo === hi) { rows.push(['CONSTANT', 'every sampled value identical', 'bad']); problems.push(name + ': constant'); }
+    if (name === 'terrain.png') {
+      const counts = {};
+      for (let p = 2; p < px.length; p += 28) counts[px[p]] = (counts[px[p]] || 0) + 1;
+      const tot = Math.ceil(px.length / 28);
+      rows.push(['flags (blue channel)', Object.entries(counts).sort((x, y) => y[1] - x[1]).slice(0, 6)
+        .map(([val, c]) => val + ': ' + (c / tot * 100).toFixed(1) + '%').join('   ') + '     1=wet 2=sea 4=outside']);
+    }
+    decoded[name.split('.')[0]] = px;
+    section(name, rows);
+  }
+
+  // ---- is fetch() itself the problem on this machine? ----
+  if (FILE_PROTO) {
+    section('fetch() probe', [['skipped', 'fetch() is blocked under file:// by design — open this page over http:// to run the probe', 'warn']]);
+  } else {
+    const rows = [];
+    for (const u of ['./data3d/terrain.png', './data3d/basemap.webp']) {
+      try {
+        const r = await fetch(u + '?v=4');
+        const b = new Uint8Array(await r.arrayBuffer());
+        const blocked = r.status === 204 || (r.status === 200 && b.length === 0);
+        rows.push(['fetch ' + u, 'HTTP ' + r.status + ', ' + b.length.toLocaleString() + ' bytes'
+          + (blocked ? '   <- 204/empty is what a browser EXTENSION returns for a blocked request' : ''),
+          blocked ? 'bad' : 'ok']);
+        if (blocked) problems.push('fetch() of ' + u + ' was blocked (HTTP ' + r.status + ', ' + b.length + ' bytes) — try an incognito window with extensions off');
+      } catch (e) {
+        rows.push(['fetch ' + u, 'THREW: ' + e.message, 'bad']);
+        problems.push('fetch() of ' + u + ' threw: ' + e.message);
+      }
+    }
+    rows.push(['note', 'The viewer no longer uses fetch() for rasters. These two rows exist only to\nconfirm whether fetch is what is broken on this machine.']);
+    section('fetch() probe (diagnostic only)', rows);
+  }
+
+  // ---- reproduce the viewer's own wet test on the CPU ----
+  if (decoded.terrain && decoded.need && decoded.wsurf) {
+    const { nx, ny } = meta.grid, ws = meta.wsurfGrid;
+    const kE = (meta.elev.max - meta.elev.min) / 65535, kN = (meta.need.max - meta.need.min) / 65535;
+    const T = decoded.terrain, Nd = decoded.need, W = decoded.wsurf;
+    const u16 = (a, i) => (a[i * 4] << 8) | a[i * 4 + 1];
+    const cellA = meta.stats.cellX * meta.stats.cellY * meta.stats.mercatorAreaFactor;
+    const rows = [];
+    for (const d of [0, 1, 2]) {
+      let n = 0, vol = 0;
+      for (let iz = 0; iz < ny; iz++) {
+        const wz = Math.min(ws.ny - 1, (iz * ws.ny / ny) | 0) * ws.nx;
+        for (let ix = 0; ix < nx; ix++) {
+          const i = iz * nx + ix, f = T[i * 4 + 2];
+          if (f & 4 || f & 2) continue;
+          const rn = u16(Nd, i);
+          const nv = rn === 65535 ? 9 : meta.need.min + rn * kN;
+          if (d < nv) continue;
+          const wv = meta.elev.min + u16(W, wz + Math.min(ws.nx - 1, (ix * ws.nx / nx) | 0)) * kE;
+          const dep = (f & 1) ? (d - nv)
+                              : Math.max(wv + d - (meta.elev.min + u16(T, i) * kE), d - nv);
+          if (dep <= 0) continue;
+          n++; vol += dep;
+        }
+      }
+      rows.push(['delta = +' + d.toFixed(2) + ' m',
+        (n * cellA / 1e6).toFixed(2).padStart(8) + ' km2   ' + (vol * cellA / 1e6).toFixed(2).padStart(8) + ' Mm3',
+        n > 0 ? 'ok' : 'bad']);
+      if (d === 0 && n === 0) problems.push('wet-cell test yields 0 cells at delta = 0');
+    }
+    rows.push(['expected at delta = 0', meta.stats.observedAreaKm2.toFixed(2) + ' km2   ' + meta.stats.observedVolumeMm3.toFixed(2) + ' Mm3']);
+    section('recomputed statistics (independent of the viewer code)', rows);
+  }
+
+  // ---- basemap: the viewer tries each of these and keeps the first that decodes ----
+  {
+    const rows = [];
+    let anyOk = false;
+    for (const name of ['imagery.jpg', 'basemap.webp']) {
+      const ok = await new Promise((res) => {
+        const im = new Image();
+        im.onload = () => { rows.push([name, 'decoded ' + im.naturalWidth + ' x ' + im.naturalHeight, 'ok']); res(true); };
+        im.onerror = () => { rows.push([name, 'BLOCKED or undecodable', 'bad']); res(false); };
+        im.src = './data3d/' + name + '?v=4';
+      });
+      anyOk = anyOk || ok;
+    }
+    rows.push(['verdict', anyOk ? 'at least one basemap loads — the viewer will show imagery'
+      : 'none loaded — the viewer falls back to a plain terrain colour', anyOk ? 'ok' : 'bad']);
+    if (!anyOk) problems.push('no basemap image could be loaded');
+    section('basemap candidates', rows);
+  }
+
+  if (false) await new Promise((res) => {
+    const im = new Image();
+    im.onload = () => { res(); };
+    im.onerror = () => {
+      section('basemap.webp', [['decode', 'FAILED — the image was blocked or is unreadable. Chrome has supported WebP since 2014, so on a modern Chrome this is a blocker/extension, not a codec gap.', 'bad']]);
+      problems.push('basemap.webp failed to load — the viewer will fall back to a plain terrain colour');
+      res();
+    };
+    im.src = './data3d/basemap.webp?v=4';
+  });
+
+  if (!FILE_PROTO) verdict.innerHTML = problems.length
+    ? '<span class="bad">' + problems.length + ' problem(s):</span> ' + esc(problems.join(' · '))
+    : '<span class="ok">All assets load and decode correctly.</span> If the viewer still renders '
+      + 'a flat plane, the fault is in the GPU path, not the data — send a screenshot of the browser console (F12).';
+  else if (problems.length) verdict.innerHTML += ' <span class="bad">Also: ' + esc(problems.join(' · ')) + '</span>';
+} catch (e) {
+  verdict.innerHTML = '<span class="bad">Self-check crashed:</span> ' + esc(e && e.stack || e);
+}
+</script>
+</body>
+</html>

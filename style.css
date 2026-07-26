@@ -1,0 +1,2050 @@
+@charset "utf-8";
+/* ============================================================================
+   Kempsey 3D Flood Viewer — page chrome
+   ----------------------------------------------------------------------------
+   Owns every pixel that is not the WebGL canvas: the UI root, the four layout
+   zones, glass panels, the lil-gui host, the depth legend, the stats card, the
+   click-query card, the title/credit block, the help popover, the water-level
+   scrubber, the status pill and the loading overlay.
+
+   CASCADE NOTE — js/ui.js ships a small baseline stylesheet that it injects as
+   the FIRST child of <head>, i.e. *before* this file's <link>. Every rule here
+   therefore beats a ui.js rule of equal specificity purely by document order,
+   and most of the theme is flipped simply by redefining the --fv-* custom
+   properties below. Where ui.js uses a two-class selector this file matches or
+   exceeds that specificity explicitly. All layout primitives are also restated
+   here so the chrome still lays out correctly if that baseline ever goes away.
+
+   No @import, no web fonts, no external URLs — the whole viewer works offline.
+   ========================================================================== */
+
+/* ============================================================================
+   1. Design tokens
+   ========================================================================== */
+
+:root {
+  /* -- Type ---------------------------------------------------------------
+     System UI stack first, then the CJK families the Chinese labels need
+     (labels are "中文 (english)" per the contract), so a missing CJK face
+     never falls back to a serif. */
+  --fv-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+             "Helvetica Neue", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB",
+             "Microsoft YaHei", sans-serif;
+  --fv-mono: ui-monospace, SFMono-Regular, "SF Mono", "JetBrains Mono",
+             "Roboto Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* -- ColorBrewer Blues, the exact 9 anchors the shader's science ramp and
+        the legend gradient use. Kept as tokens so chrome and pixels agree. -- */
+  --fv-blues-0: #f7fbff;
+  --fv-blues-1: #deebf7;
+  --fv-blues-2: #c6dbef;
+  --fv-blues-3: #9ecae1;
+  --fv-blues-4: #6baed6;
+  --fv-blues-5: #4292c6;
+  --fv-blues-6: #2171b5;
+  --fv-blues-7: #08519c;
+  --fv-blues-8: #08306b;
+
+  /* Horizontal twin of the legend gradient (ui.js sets a `to top` gradient
+     inline for the vertical bar; the responsive bar needs `to right`).
+     Stops are evenly spaced at i/8 to match the vertical bar exactly. */
+  --fv-ramp-h: linear-gradient(to right,
+    var(--fv-blues-0)   0%, var(--fv-blues-1) 12.5%, var(--fv-blues-2)  25%,
+    var(--fv-blues-3) 37.5%, var(--fv-blues-4)   50%, var(--fv-blues-5) 62.5%,
+    var(--fv-blues-6)  75%, var(--fv-blues-7) 87.5%, var(--fv-blues-8) 100%);
+
+  /* -- Accent -------------------------------------------------------------
+     The accent is drawn from the data ramp: #2171b5 (Blues-6, the deep end)
+     for fills, borders and active states, #6baed6 (Blues-4) for hover.
+     On a DARK panel #2171b5 as *text* only reaches ~2.4:1 contrast, so the
+     text-facing token is the lighter Blues-4 and the "deep" token — which
+     ui.js uses for its hero numbers — is inverted to the pale end of the
+     ramp. Same family, legible on glass. */
+  --fv-accent: #6baed6;             /* accent as text / small strokes        */
+  --fv-accent-fill: #2171b5;        /* accent as a filled surface            */
+  --fv-accent-hover: #6baed6;       /* hover / active fill                   */
+  --fv-accent-deep: #c6dbef;        /* emphasis numerals on dark glass       */
+  --fv-accent-soft: rgba(107, 174, 214, .16);
+  --fv-accent-line: rgba(107, 174, 214, .42);
+  --fv-focus: #6baed6;
+
+  /* -- Ink ---------------------------------------------------------------- */
+  --fv-ink: #e9f1f8;                /* primary text                          */
+  --fv-ink-soft: #aebdcb;           /* labels, secondary copy                */
+  --fv-ink-faint: #8394a4;          /* units, captions, tick labels          */
+
+  /* -- Glass --------------------------------------------------------------
+     A real dark-glass panel is TWO layers: a dark scrim that buys text
+     contrast over a bright, high-key 3D map, plus an 8-14% white tint on top
+     that supplies the milky "glass" quality. Applying only the white tint
+     over a sunlit basemap would leave the panel bright and the light ink
+     unreadable, so the tint always rides on the scrim. Both are tokens, so
+     the scrim can be dialled back over darker scenes. */
+  --fv-scrim: rgba(11, 16, 22, .66);
+  --fv-scrim-strong: rgba(9, 13, 19, .82);
+  --fv-tint: linear-gradient(180deg, rgba(255,255,255,.115), rgba(255,255,255,.055));
+  --fv-tint-strong: linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,.07));
+
+  /* Legacy aliases consumed by the ui.js baseline sheet. Redefining them here
+     is what flips that stylesheet from light to dark wholesale. */
+  --fv-panel: var(--fv-scrim);
+  --fv-panel-strong: var(--fv-scrim-strong);
+
+  --fv-line: rgba(255, 255, 255, .14);          /* 1px hairline               */
+  --fv-line-soft: rgba(255, 255, 255, .075);    /* internal rules             */
+  --fv-line-strong: rgba(255, 255, 255, .24);
+
+  --fv-app-bg: #0a0e13;             /* behind the canvas, pre-first-frame    */
+
+  /* -- Elevation ---------------------------------------------------------- */
+  --fv-shadow: 0 1px 2px rgba(0, 0, 0, .34), 0 12px 34px rgba(2, 6, 12, .46);
+  --fv-shadow-lg: 0 2px 6px rgba(0, 0, 0, .38), 0 26px 64px rgba(2, 6, 12, .58);
+  --fv-inset: inset 0 1px 0 rgba(255, 255, 255, .07);
+
+  /* -- Blur --------------------------------------------------------------- */
+  --fv-blur: 14px;
+  --fv-blur-sm: 8px;
+  --fv-blur-lg: 26px;
+  --fv-sat: 1.18;
+
+  /* -- Radii -------------------------------------------------------------- */
+  --fv-radius: 8px;
+  --fv-radius-sm: 5px;
+  --fv-radius-lg: 13px;
+  --fv-radius-pill: 999px;
+
+  /* -- Spacing ------------------------------------------------------------ */
+  --fv-space-1: 4px;
+  --fv-space-2: 7px;
+  --fv-space-3: 10px;
+  --fv-space-4: 14px;
+  --fv-space-5: 20px;
+  --fv-gap: var(--fv-space-3);
+  --fv-pad-x: var(--fv-space-3);
+
+  /* -- Metrics ------------------------------------------------------------ */
+  --fv-sheet-h: 40px;               /* bottom-sheet handle height            */
+  --fv-tap: 30px;                   /* min interactive size; 44px on touch   */
+  --fv-track: .06em;                /* label letter-spacing                  */
+  --fv-track-wide: .13em;           /* uppercase micro-label tracking        */
+
+  /* -- Motion -------------------------------------------------------------- */
+  --fv-dur: .18s;
+  --fv-dur-slow: .42s;
+  /* Loading-overlay fade. HARD CONSTRAINT: js/ui.js's OVERLAY_FADE_MS is 240
+     and hideOverlay() slams [hidden] onto the splash OVERLAY_FADE_MS + 20 ms
+     after adding .fv-overlay--out. Anything longer than ~.24s means the
+     overlay is still substantially opaque when it is yanked from the box tree,
+     so the splash visibly *pops* off the screen instead of fading. Keep this
+     token <= .24s, or change OVERLAY_FADE_MS to match. */
+  --fv-dur-fade: .22s;
+  --fv-ease: cubic-bezier(.2, .7, .3, 1);
+
+  /* Safe-area insets — index.html opts into viewport-fit=cover. */
+  --fv-safe-t: env(safe-area-inset-top, 0px);
+  --fv-safe-r: env(safe-area-inset-right, 0px);
+  --fv-safe-b: env(safe-area-inset-bottom, 0px);
+  --fv-safe-l: env(safe-area-inset-left, 0px);
+
+  color-scheme: dark;
+}
+
+/* Where backdrop-filter is unavailable the panels would read as thin grey
+   films over the map; deepen the scrim instead so text stays legible. */
+@supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+  :root {
+    --fv-scrim: rgba(11, 16, 22, .88);
+    --fv-scrim-strong: rgba(9, 13, 19, .95);
+  }
+}
+
+/* ============================================================================
+   2. Page shell and canvas host
+   ========================================================================== */
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  overflow: hidden;                 /* the canvas owns the viewport          */
+  background: var(--fv-app-bg);
+  color: var(--fv-ink);
+  font-family: var(--fv-sans);
+  font-size: 12px;
+  line-height: 1.45;
+  overscroll-behavior: none;        /* no rubber-band while orbiting         */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The renderer's element (main.js sets className = 'fv-canvas'). three.js
+   writes inline px width/height via setSize(), which wins over any sizing
+   here — these rules only pin it to the viewport and kill browser gestures
+   that would otherwise fight OrbitControls. */
+.fv-canvas,
+canvas.fv-canvas,
+body > canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  outline: none;
+  background: transparent;
+}
+
+::selection {
+  background: rgba(107, 174, 214, .32);
+  color: #fff;
+}
+
+/* Fatal-error card written by main.js when boot fails (WebGL2 missing, an
+   asset 404s, …). Sits above everything, including the loading overlay.
+
+   `right`/`bottom` MUST be reset explicitly. ui.js's baseline sheet pins this
+   same element with `left:14px; right:14px; bottom:14px`, and only `left` is
+   restated below — so without these two resets the box is over-constrained:
+   with `top`, `bottom` and `height:auto` all present the used height is solved
+   as `100% - top - bottom`, i.e. a fixed `50vh - 14px` no matter how short the
+   message is, `max-height` never binds, and a one-line "Failed to load"
+   renders as a half-viewport slab of empty glass. */
+.fv-fatal {
+  position: fixed;
+  z-index: 9999;
+  top: 50%;
+  left: 50%;
+  right: auto;
+  bottom: auto;
+  transform: translate(-50%, -50%);
+  max-width: min(680px, calc(100vw - 32px));
+  max-height: 80vh;
+  margin: 0;
+  overflow: auto;
+  padding: var(--fv-space-4) var(--fv-space-5);
+  border: 1px solid rgba(255, 138, 128, .34);
+  border-radius: var(--fv-radius);
+  background: var(--fv-scrim-strong);
+  -webkit-backdrop-filter: blur(var(--fv-blur)) saturate(var(--fv-sat));
+  backdrop-filter: blur(var(--fv-blur)) saturate(var(--fv-sat));
+  box-shadow: var(--fv-shadow-lg);
+  color: #ffd9d4;
+  font-family: var(--fv-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Thin, low-contrast scrollbars anywhere the chrome scrolls. */
+.fv-ui,
+.fv-zone,
+.fv-zone--tl,
+.fv-gui,
+.fv-gui-host,
+.fv-modal-card,
+.fv-about-body {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, .22) transparent;
+}
+
+.fv-ui ::-webkit-scrollbar { width: 7px; height: 7px; }
+.fv-ui ::-webkit-scrollbar-track { background: transparent; }
+.fv-ui ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, .18);
+  border-radius: var(--fv-radius-pill);
+}
+.fv-ui ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, .3); }
+
+/* ============================================================================
+   3. UI root and layout zones
+   ========================================================================== */
+
+.fv-ui {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;             /* clicks fall through to the canvas     */
+  font-family: var(--fv-sans);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--fv-ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.fv-ui * { box-sizing: border-box; }
+
+.fv-ui button,
+.fv-ui input,
+.fv-ui select,
+.fv-ui textarea,
+.fv-ui summary {
+  font-family: inherit;
+  color: inherit;
+}
+
+.fv-ui a,
+.fv-ui .fv-link {
+  color: var(--fv-accent);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(107, 174, 214, .34);
+  transition: color var(--fv-dur) var(--fv-ease),
+              border-color var(--fv-dur) var(--fv-ease);
+}
+
+.fv-ui a:hover,
+.fv-ui .fv-link:hover {
+  color: var(--fv-blues-2);
+  border-bottom-color: var(--fv-accent);
+}
+
+.fv-ui :focus-visible,
+.lil-gui :focus-visible {
+  outline: 2px solid var(--fv-focus);
+  outline-offset: 2px;
+  border-radius: var(--fv-radius-sm);
+}
+
+/* Layout zones; only the cards inside them take pointer events.
+   Four corners plus a bottom-centre zone for the water-level scrubber.
+
+   INVARIANT — placement is a zone concern, never a card concern. `.fv-panel`
+   below is a *skin* and carries `position: relative` (it is the containing
+   block for the markers, carets and close buttons inside a card), and that
+   rule is written `.fv-ui .fv-panel`, i.e. two classes. A single-class card
+   rule such as `.fv-scrub { position: absolute }` therefore LOSES to it and
+   the card silently falls back into normal flow — which is exactly how the
+   scrubber ended up pinned to the top edge. Position the zone instead. */
+.fv-zone {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: var(--fv-gap);
+}
+
+.fv-zone > * { pointer-events: auto; }
+
+.fv-zone--tl {
+  top: calc(var(--fv-space-4) + var(--fv-safe-t));
+  left: calc(var(--fv-space-4) + var(--fv-safe-l));
+  width: 322px;
+  max-height: calc(100% - var(--fv-space-4) * 2 - var(--fv-safe-t) - var(--fv-safe-b));
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.fv-zone--tr {
+  top: calc(var(--fv-space-4) + var(--fv-safe-t));
+  right: calc(var(--fv-space-4) + var(--fv-safe-r));
+  width: 272px;
+  align-items: flex-end;
+}
+
+.fv-zone--bl {
+  left: calc(var(--fv-space-4) + var(--fv-safe-l));
+  bottom: calc(var(--fv-space-4) + var(--fv-safe-b));
+  width: 270px;
+  align-items: stretch;
+  justify-content: flex-end;
+}
+
+.fv-zone--br {
+  right: calc(var(--fv-space-4) + var(--fv-safe-r));
+  bottom: calc(var(--fv-space-4) + var(--fv-safe-b));
+  align-items: flex-end;
+  /* Never taller than the viewport: the ramp inside shrinks to fit. */
+  max-height: calc(100% - var(--fv-space-4) * 2 - var(--fv-safe-t) - var(--fv-safe-b));
+}
+
+/* Bottom centre — the hero water-level scrubber. Width is clamped so the card
+   can never reach the 270px bottom-left column or the legend column: at 1280,
+   1440 and 1920 it is a 520px card centred with >90px of clearance either
+   side, and below ~1024 the max-width takes over before the zones can touch. */
+.fv-zone--bc {
+  left: 50%;
+  bottom: calc(var(--fv-space-4) + var(--fv-safe-b));
+  transform: translateX(-50%);
+  width: min(520px, 42vw);
+  min-width: 300px;
+  max-width: calc(100vw - 596px);
+  align-items: stretch;
+}
+
+/* ============================================================================
+   4. Glass primitives — .fv-panel / .fv-card and friends
+   ========================================================================== */
+
+.fv-panel,
+.fv-card,
+.fv-ui .fv-panel,
+.fv-ui .fv-card {
+  position: relative;
+  background-color: var(--fv-scrim);
+  background-image: var(--fv-tint);
+  -webkit-backdrop-filter: blur(var(--fv-blur)) saturate(var(--fv-sat));
+  backdrop-filter: blur(var(--fv-blur)) saturate(var(--fv-sat));
+  border: 1px solid var(--fv-line);
+  border-radius: var(--fv-radius);
+  box-shadow: var(--fv-shadow), var(--fv-inset);
+  color: var(--fv-ink);
+}
+
+.fv-panel-strong,
+.fv-ui .fv-panel-strong {
+  background-color: var(--fv-scrim-strong);
+  background-image: var(--fv-tint-strong);
+}
+
+/* Card header: Chinese title left, uppercase English term right. */
+.fv-head,
+.fv-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--fv-space-3);
+  padding: var(--fv-space-2) var(--fv-pad-x) 6px;
+  border-bottom: 1px solid var(--fv-line-soft);
+}
+
+.fv-head-zh {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: .01em;
+  color: var(--fv-ink);
+}
+
+.fv-head-en {
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--fv-track-wide);
+  color: var(--fv-ink-faint);
+  white-space: nowrap;
+}
+
+.fv-body,
+.fv-card-body { padding: 6px 0 var(--fv-space-2); }
+
+.fv-note {
+  padding: 2px var(--fv-pad-x) 0;
+  font-size: 10px;
+  line-height: 1.55;
+  color: var(--fv-ink-faint);
+}
+
+.fv-rule,
+.fv-sep {
+  height: 1px;
+  margin: var(--fv-space-1) var(--fv-pad-x);
+  background: var(--fv-line-soft);
+  border: 0;
+}
+
+.fv-eyebrow {
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .17em;
+  color: var(--fv-accent);
+}
+
+/* -- key / value rows ------------------------------------------------------
+   `.fv-label`/`.fv-value` are generic aliases for markup that does not use
+   ui.js's `.fv-row-label`/`.fv-row-val` names. */
+.fv-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--fv-space-4);
+  padding: 2.5px var(--fv-pad-x);
+}
+
+.fv-row-label,
+.fv-label {
+  min-width: 0;
+  font-size: 11px;
+  letter-spacing: var(--fv-track);
+  color: var(--fv-ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fv-row-label i,
+.fv-label i {
+  font-style: normal;
+  color: var(--fv-ink-faint);
+}
+
+/* Every number is monospaced, tabular and right-aligned so the digits do not
+   jitter while the water-level slider is being dragged. */
+.fv-row-val,
+.fv-value,
+.fv-mono,
+.fv-num {
+  font-family: var(--fv-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 1;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+  letter-spacing: -.01em;
+  color: var(--fv-ink);
+}
+
+.fv-row-unit,
+.fv-unit {
+  margin-left: 4px;
+  font-family: var(--fv-mono);
+  font-size: 9.5px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--fv-ink-faint);
+}
+
+/* Hero row — the headline figure of a card. */
+.fv-row--hero .fv-row-val,
+.fv-row--hero .fv-value,
+.fv-ui .fv-row--hero .fv-row-val {
+  font-size: 15.5px;
+  font-weight: 660;
+  color: var(--fv-accent-deep);
+}
+
+.fv-sub {
+  padding: 0 var(--fv-pad-x) 3px;
+  font-family: var(--fv-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  text-align: right;
+  color: var(--fv-ink-faint);
+}
+
+.fv-sub[hidden],
+.fv-row[hidden],
+.fv-note[hidden] { display: none; }
+
+.fv-sans { font-family: var(--fv-sans); }
+
+/* -- buttons --------------------------------------------------------------- */
+.fv-btn,
+.fv-ui .fv-btn {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--fv-tap);
+  padding: 4px 10px;
+  background-color: var(--fv-scrim);
+  background-image: var(--fv-tint);
+  -webkit-backdrop-filter: blur(var(--fv-blur)) saturate(var(--fv-sat));
+  backdrop-filter: blur(var(--fv-blur)) saturate(var(--fv-sat));
+  border: 1px solid var(--fv-line);
+  border-radius: var(--fv-radius);
+  box-shadow: var(--fv-shadow), var(--fv-inset);
+  color: var(--fv-ink-soft);
+  font-size: 11px;
+  font-weight: 560;
+  letter-spacing: var(--fv-track);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--fv-dur) var(--fv-ease),
+              border-color var(--fv-dur) var(--fv-ease),
+              background-color var(--fv-dur) var(--fv-ease),
+              transform var(--fv-dur) var(--fv-ease);
+}
+
+.fv-btn:hover,
+.fv-ui .fv-btn:hover {
+  color: var(--fv-accent-hover);
+  border-color: var(--fv-accent-line);
+  background-color: rgba(33, 113, 181, .22);
+}
+
+.fv-btn:active,
+.fv-ui .fv-btn:active { transform: translateY(1px); }
+
+/* Pressed / toggled: filled with the deep accent so "on" is unmistakable. */
+.fv-btn[aria-expanded="true"],
+.fv-btn.fv-btn--on,
+.fv-btn[aria-pressed="true"],
+.fv-ui .fv-btn[aria-expanded="true"],
+.fv-ui .fv-btn.fv-btn--on,
+.fv-ui .fv-btn[aria-pressed="true"] {
+  color: #f2f8fd;
+  border-color: var(--fv-accent-line);
+  background-color: rgba(33, 113, 181, .58);
+  background-image: var(--fv-tint);
+}
+
+.fv-btn kbd,
+.fv-ui .fv-btn kbd {
+  font-family: var(--fv-mono);
+  font-size: 9px;
+  letter-spacing: .04em;
+  color: var(--fv-ink-faint);
+}
+
+.fv-btn:hover kbd { color: inherit; }
+
+.fv-btn[disabled],
+.fv-btn:disabled {
+  opacity: .45;
+  cursor: default;
+  pointer-events: none;
+}
+
+.fv-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+/* -- toolbar buttons are secondary chrome ----------------------------------
+   Full glass + shadow + 8px radius made the "快捷键 (keys)" button read as a
+   card, so it and the control panel below it competed as two equal blocks in
+   the same corner. Demoted to a ghost pill: same dark-glass family, a third of
+   the presence, and a shape that says "control" rather than "panel". The
+   toggled state keeps the accent fill, so "open" is still unmistakable. */
+.fv-toolbar .fv-btn,
+.fv-ui .fv-toolbar .fv-btn {
+  min-height: 26px;
+  padding: 0 11px;
+  border-color: var(--fv-line-soft);
+  border-radius: var(--fv-radius-pill);
+  background-color: rgba(11, 16, 22, .52);
+  background-image: none;
+  -webkit-backdrop-filter: blur(var(--fv-blur-sm)) saturate(var(--fv-sat));
+  backdrop-filter: blur(var(--fv-blur-sm)) saturate(var(--fv-sat));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .28);
+  color: var(--fv-ink-faint);
+  font-size: 10.5px;
+  font-weight: 550;
+}
+
+.fv-toolbar .fv-btn:hover,
+.fv-ui .fv-toolbar .fv-btn:hover {
+  border-color: var(--fv-accent-line);
+  background-color: rgba(33, 113, 181, .26);
+  color: var(--fv-ink);
+}
+
+/* The shortcut hint is a hint: a chip, not a second label. */
+.fv-toolbar .fv-btn kbd,
+.fv-ui .fv-toolbar .fv-btn kbd {
+  padding: 0 4px;
+  border: 1px solid var(--fv-line-soft);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, .06);
+  font-size: 8.5px;
+  line-height: 1.5;
+  color: var(--fv-ink-faint);
+}
+
+/* -- tags / pills ---------------------------------------------------------- */
+.fv-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 3px var(--fv-pad-x) 1px;
+}
+
+/* `:empty` never fires: ui.js always ships both tag spans and toggles their
+   [hidden], so the container kept reserving its 4px of vertical padding under
+   every query result. `:has()` is the only way to test "all children hidden";
+   where it is unsupported the whole rule is dropped and we are simply back to
+   the 4px, so this is safe to state unconditionally. */
+.fv-tags:empty { display: none; }
+.fv-tags:not(:has(> :not([hidden]))) { display: none; }
+
+.fv-tag,
+.fv-ui .fv-tag {
+  padding: 0 7px;
+  border: 1px solid var(--fv-line);
+  border-radius: var(--fv-radius-pill);
+  background: rgba(255, 255, 255, .07);
+  color: var(--fv-ink-soft);
+  font-size: 9px;
+  line-height: 1.65;
+  letter-spacing: var(--fv-track);
+  white-space: nowrap;
+}
+
+.fv-tag[hidden] { display: none; }
+
+.fv-tag--obs,
+.fv-ui .fv-tag--obs {
+  color: var(--fv-blues-2);
+  border-color: var(--fv-accent-line);
+  background: var(--fv-accent-soft);
+}
+
+.fv-tag--sea,
+.fv-ui .fv-tag--sea {
+  color: var(--fv-blues-3);
+  border-color: rgba(158, 202, 225, .3);
+  background: rgba(158, 202, 225, .1);
+}
+
+/* ============================================================================
+   5. Title / credit block
+   ========================================================================== */
+
+.fv-title {
+  padding: 13px var(--fv-space-4) 12px;
+}
+
+.fv-title h1 {
+  margin: 5px 0 2px;
+  font-size: 17px;
+  font-weight: 680;
+  line-height: 1.25;
+  letter-spacing: .01em;
+  color: var(--fv-ink);
+}
+
+.fv-title h2 {
+  margin: 0 0 var(--fv-space-3);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .02em;
+  color: var(--fv-ink-soft);
+}
+
+/* Two dense bilingual lines: they need leading, not more type size.
+   NB `text-wrap: balance` is deliberately NOT used — CJK has a break
+   opportunity between every pair of glyphs, so balancing splits 地形 across
+   two lines. `pretty` only trims orphans and leaves the runs intact. */
+.fv-title-src {
+  font-size: 10.5px;
+  line-height: 1.75;
+  text-wrap: pretty;
+  color: var(--fv-ink-soft);
+}
+
+.fv-credit {
+  margin-top: var(--fv-space-3);
+  padding-top: var(--fv-space-3);
+  border-top: 1px solid var(--fv-line-soft);
+  font-size: 10.5px;
+  line-height: 1.75;
+  color: var(--fv-ink-soft);
+}
+
+.fv-credit-doi {
+  font-family: var(--fv-mono);
+  font-size: 10px;
+  letter-spacing: -.01em;
+  word-break: break-all;
+}
+
+/* -- "about" expander ------------------------------------------------------ */
+.fv-about {
+  margin-top: var(--fv-space-3);
+  padding-top: 4px;
+  border-top: 1px solid var(--fv-line-soft);
+}
+
+.fv-about > summary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: var(--fv-tap);
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: var(--fv-track);
+  color: var(--fv-accent);
+}
+
+.fv-about > summary::-webkit-details-marker { display: none; }
+
+.fv-about > summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transform-origin: 2px 50%;
+  transition: transform .15s var(--fv-ease);
+}
+
+.fv-about[open] > summary::before { transform: rotate(90deg); }
+
+.fv-about-body {
+  padding: 6px 0 1px;
+  font-size: 10.5px;
+  line-height: 1.65;
+  color: var(--fv-ink-soft);
+}
+
+.fv-about-body p { margin: 0 0 5px; }
+
+.fv-about-body b {
+  font-weight: 640;
+  color: var(--fv-ink);
+}
+
+.fv-about-body code,
+.fv-ui code {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--fv-accent-soft);
+  color: var(--fv-blues-2);
+  font-family: var(--fv-mono);
+  font-size: 9.5px;
+}
+
+.fv-facts {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--fv-line-soft);
+  font-family: var(--fv-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 9.5px;
+  line-height: 1.75;
+  color: var(--fv-ink-faint);
+}
+
+/* ============================================================================
+   6. lil-gui host and lil-gui restyle
+   ----------------------------------------------------------------------------
+   lil-gui is themed through its own custom properties rather than by fighting
+   its rules. `.fv-gui` is the contract name for the host, `.fv-gui-host` is
+   what ui.js emits — both are supported, plus a bare `.lil-gui` fallback for
+   an auto-placed GUI attached straight to <body>.
+   ========================================================================== */
+
+.fv-gui,
+.fv-gui-host {
+  width: 100%;
+}
+
+.lil-gui,
+.fv-gui .lil-gui,
+.fv-gui-host .lil-gui,
+.fv-ui .fv-gui-host .lil-gui {
+  --background-color: var(--fv-scrim);
+  --text-color: #cfdce8;
+  --title-background-color: rgba(255, 255, 255, .075);
+  --title-text-color: var(--fv-ink);
+  --widget-color: rgba(255, 255, 255, .11);
+  --hover-color: rgba(255, 255, 255, .17);
+  --focus-color: rgba(107, 174, 214, .42);
+  --number-color: var(--fv-blues-3);
+  --string-color: var(--fv-blues-4);
+  --font-size: 11px;
+  --input-font-size: 11px;
+  --font-family: var(--fv-sans);
+  --font-family-mono: var(--fv-mono);
+  --padding: 6px;
+  --spacing: 5px;
+  --widget-height: 19px;
+  /* NOTE: --title-height is deliberately NOT set here. lil-gui declares it on
+     `.lil-gui .title` itself (`calc(var(--widget-height) + var(--spacing)*1.25)`),
+     and a declaration that lands directly on an element always beats a value
+     inherited from its parent — so setting it on the container is a dead
+     declaration. It is set on `.title` further down instead. */
+  --widget-padding: 0 0 0 3px;
+  --scrollbar-width: 6px;
+  --slider-knob-width: 2px;
+  --name-width: 62%;
+  --width: 100%;
+}
+
+/* The glass frame belongs to the ROOT gui only. lil-gui gives every nested
+   folder the .lil-gui class as well, so an unscoped frame would draw a border,
+   radius, blur layer and shadow around each of the four folder groups. */
+.lil-gui.root,
+.fv-gui .lil-gui.root,
+.fv-gui-host .lil-gui.root,
+.fv-ui .fv-gui-host .lil-gui.root {
+  width: 100%;
+  border: 1px solid var(--fv-line);
+  border-radius: var(--fv-radius);
+  background-image: var(--fv-tint);
+  -webkit-backdrop-filter: blur(var(--fv-blur)) saturate(var(--fv-sat));
+  backdrop-filter: blur(var(--fv-blur)) saturate(var(--fv-sat));
+  box-shadow: var(--fv-shadow), var(--fv-inset);
+  overflow: hidden;
+}
+
+/* …and is explicitly removed from nested folders (specificity has to clear the
+   two-class rule ui.js's baseline sheet applies to every .lil-gui in the host). */
+.lil-gui .lil-gui,
+.fv-gui .lil-gui .lil-gui,
+.fv-gui-host .lil-gui .lil-gui,
+.fv-ui .fv-gui-host .lil-gui .lil-gui {
+  border: 0;
+  border-radius: 0;
+  background-image: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+/* An auto-placed root GUI (no host element) docks under the toolbar. */
+.lil-gui.autoPlace {
+  z-index: 11;
+  top: calc(var(--fv-space-4) + var(--fv-safe-t) + 42px);
+  right: calc(var(--fv-space-4) + var(--fv-safe-r));
+  width: 272px;
+  max-width: calc(100vw - var(--fv-space-4) * 2);
+}
+
+/* Folder titles: uppercase-ish tracking, hairline separators, no seams.
+   --title-height has to be re-declared *on the title element* to take effect
+   (lil-gui declares it here too, so an inherited value from .lil-gui loses). */
+.lil-gui .title,
+.fv-gui-host .lil-gui .title {
+  --title-height: 26px;
+  font-weight: 620;
+  letter-spacing: .02em;
+  border-bottom: 1px solid var(--fv-line-soft);
+}
+
+/* The panel's own header is the anchor of the top-right corner, so it carries
+   more weight than the folder rows beneath it and than the ghost pill above. */
+.lil-gui.root > .title,
+.fv-gui-host .lil-gui.root > .title,
+.fv-ui .fv-gui-host .lil-gui.root > .title {
+  background: rgba(255, 255, 255, .105);
+  border-bottom: 1px solid var(--fv-line);
+  font-size: 11.5px;
+  font-weight: 660;
+  letter-spacing: var(--fv-track);
+  color: var(--fv-ink);
+}
+
+/* Folder rows read as the second level: quieter than the header. */
+.lil-gui .lil-gui > .title,
+.fv-gui-host .lil-gui .lil-gui > .title {
+  background: transparent;
+  font-weight: 600;
+  color: var(--fv-ink-soft);
+}
+
+.lil-gui .lil-gui > .title:hover,
+.fv-gui-host .lil-gui .lil-gui > .title:hover {
+  background: rgba(255, 255, 255, .05);
+  color: var(--fv-ink);
+}
+
+.lil-gui .title:hover,
+.fv-gui-host .lil-gui .title:hover { color: #fff; }
+
+.lil-gui .lil-gui > .title,
+.fv-gui-host .lil-gui .lil-gui > .title {
+  border-top: 1px solid var(--fv-line-soft);
+}
+
+.lil-gui .controller > .name,
+.fv-gui-host .lil-gui .controller > .name {
+  color: var(--fv-ink-soft);
+  letter-spacing: var(--fv-track);
+}
+
+/* Numbers in the GUI are tabular too, so dragging a slider does not reflow. */
+.lil-gui input,
+.lil-gui .display,
+.fv-gui-host .lil-gui input,
+.fv-gui-host .lil-gui .display {
+  font-variant-numeric: tabular-nums;
+  border-radius: var(--fv-radius-sm);
+}
+
+.lil-gui .controller.number input,
+.fv-gui-host .lil-gui .controller.number input {
+  color: var(--fv-blues-3);
+  font-family: var(--fv-mono);
+}
+
+/* The filled part of a slider is the one place the deep accent works as a
+   surface — it sits on the dark widget track, not on text. */
+.lil-gui .controller.number .fill,
+.fv-gui-host .lil-gui .controller.number .fill {
+  background: linear-gradient(90deg, var(--fv-accent-fill), var(--fv-blues-5));
+}
+
+.lil-gui .controller.number .slider:hover .fill,
+.lil-gui .controller.number .slider.active .fill,
+.fv-gui-host .lil-gui .controller.number .slider.active .fill {
+  background: linear-gradient(90deg, var(--fv-blues-5), var(--fv-accent-hover));
+}
+
+.lil-gui .controller.number .slider,
+.fv-gui-host .lil-gui .controller.number .slider {
+  border-radius: var(--fv-radius-sm);
+}
+
+.lil-gui input[type="checkbox"]:checked,
+.fv-gui-host .lil-gui input[type="checkbox"]:checked {
+  background: var(--fv-accent-fill);
+}
+
+.lil-gui input[type="checkbox"]:checked::before,
+.fv-gui-host .lil-gui input[type="checkbox"]:checked::before {
+  color: #f2f8fd;
+}
+
+.lil-gui button,
+.fv-gui-host .lil-gui button {
+  border-radius: var(--fv-radius-sm);
+  letter-spacing: var(--fv-track);
+}
+
+.lil-gui .controller.option .display,
+.fv-gui-host .lil-gui .controller.option .display {
+  border-radius: var(--fv-radius-sm);
+}
+
+.lil-gui option { background: #10161d; color: var(--fv-ink); }
+
+/* -- bottom sheet wrapper (wide screens: an ordinary stacked panel) -------- */
+.fv-sheet { width: 100%; }
+.fv-sheet-head { display: none; }
+
+/* ============================================================================
+   7. Depth legend  (vertical Blues ramp, 0 → rampMax metres)
+   ========================================================================== */
+
+.fv-legend {
+  width: 132px;
+  padding: var(--fv-space-2) var(--fv-pad-x) 9px;
+  opacity: .86;
+  transition: opacity var(--fv-dur) var(--fv-ease),
+              border-color var(--fv-dur) var(--fv-ease),
+              box-shadow var(--fv-dur) var(--fv-ease);
+}
+
+.fv-legend:hover { opacity: 1; }
+
+/* Science mode makes the ramp quantitative, so the legend is promoted. */
+.fv-legend--active,
+.fv-ui .fv-legend--active {
+  opacity: 1;
+  border-color: var(--fv-accent-line);
+  box-shadow: var(--fv-shadow), var(--fv-inset), 0 0 0 2px var(--fv-accent-soft);
+}
+
+.fv-legend-title {
+  font-size: 11px;
+  font-weight: 620;
+  color: var(--fv-ink);
+}
+
+.fv-legend-sub {
+  margin-bottom: var(--fv-space-2);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: var(--fv-track-wide);
+  color: var(--fv-ink-faint);
+}
+
+/* The ramp is the card's only flexible part, so it is what gives way on short
+   viewports: title, ticks and footnote keep their size and the whole card
+   stays inside the bottom edge instead of the footnote running off it. */
+.fv-legend-scale {
+  position: relative;
+  display: flex;
+  gap: var(--fv-space-2);
+  height: clamp(112px, 21vh, 168px);
+}
+
+/* The gradient itself comes from --fv-ramp, which ui.js sets inline from the
+   same 9 Blues anchors the shader uses (light at the bottom). */
+.fv-legend-bar,
+.fv-legend-gradient {
+  position: relative;
+  flex: 0 0 15px;
+  width: 15px;
+  border: 1px solid var(--fv-line);
+  border-radius: 3px;
+  background-image: var(--fv-ramp, linear-gradient(to top,
+    var(--fv-blues-0), var(--fv-blues-4), var(--fv-blues-8)));
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .18);
+}
+
+/* Caret marking the last queried depth on the ramp; --fv-mk is 0..1. */
+.fv-legend-marker {
+  position: absolute;
+  left: -4px;
+  right: -4px;
+  bottom: calc(var(--fv-mk, 0) * 100%);
+  height: 0;
+  border-top: 1.5px solid var(--fv-ink);
+  transform: translateY(.75px);
+  opacity: .95;
+  pointer-events: none;
+}
+
+.fv-legend-marker::after {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: -3.5px;
+  border-left: 5px solid var(--fv-ink);
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+}
+
+.fv-legend-marker[hidden] { display: none; }
+
+.fv-legend-ticks {
+  position: relative;
+  flex: 1 1 auto;
+}
+
+.fv-legend-tick {
+  position: absolute;
+  left: 0;
+  bottom: calc(var(--fv-t, 0) * 100%);
+  transform: translateY(50%);
+  font-family: var(--fv-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 9.5px;
+  color: var(--fv-ink-soft);
+  white-space: nowrap;
+}
+
+.fv-legend-tick::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 50%;
+  width: 4px;
+  height: 1px;
+  background: var(--fv-line-strong);
+}
+
+/* Footnote: depths above rampMax are clipped to the darkest blue, matching
+   the published figure. */
+.fv-legend-foot {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid var(--fv-line-soft);
+  font-size: 9px;
+  line-height: 1.45;
+  text-wrap: pretty;
+  color: var(--fv-ink-faint);
+}
+
+/* ============================================================================
+   8. Stats card
+   ========================================================================== */
+
+.fv-stats .fv-row-val,
+.fv-stats .fv-value {
+  min-width: 74px;                  /* reserve the widest reading so the
+                                       column never shifts mid-drag          */
+}
+
+.fv-stats .fv-row:hover { background: rgba(255, 255, 255, .035); }
+
+/* ============================================================================
+   9. Click-query card
+   ========================================================================== */
+
+.fv-query[hidden] { display: none; }
+
+/* Headers that carry a close button. `.fv-query-close` is a var(--fv-tap) box
+   — 30px, and 44px once the touch breakpoint lands — and `.fv-head` aligns on
+   `baseline`, so that box both set the row height AND dragged the 12px title
+   down onto the button glyph's baseline: a ~43px header on desktop and a ~57px
+   one on a phone, with the title floating near the bottom edge. Centre the row
+   and let the button supply the height instead of stacking on the padding. */
+.fv-query .fv-head,
+.fv-modal-card .fv-head {
+  align-items: center;
+  padding-top: 2px;
+  padding-right: 4px;
+  padding-bottom: 2px;
+}
+
+.fv-query-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--fv-tap);
+  height: var(--fv-tap);
+  padding: 0;
+  border: 0;
+  border-radius: var(--fv-radius-sm);
+  background: transparent;
+  color: var(--fv-ink-faint);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--fv-dur) var(--fv-ease),
+              background-color var(--fv-dur) var(--fv-ease);
+}
+
+.fv-query-close:hover {
+  color: var(--fv-ink);
+  background: rgba(255, 255, 255, .1);
+}
+
+/* Colour chip showing where the queried depth lands on the Blues ramp. */
+.fv-swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 5px;
+  border: 1px solid var(--fv-line-strong);
+  border-radius: 2px;
+  background: var(--fv-swatch, transparent);
+  vertical-align: baseline;
+}
+
+.fv-dry {
+  padding: 2px var(--fv-pad-x) 4px;
+  font-size: 10.5px;
+  color: var(--fv-ink-faint);
+}
+
+.fv-dry[hidden] { display: none; }
+
+/* ============================================================================
+   10. Water-level scrubber
+   ========================================================================== */
+
+/* The card only paints itself; `.fv-zone--bc` places it (see section 3). The
+   explicit `inset:auto` neutralises the old self-positioning offsets should an
+   out-of-date ui.js baseline sheet still ship them — without it a stale
+   `bottom:16px` would be re-interpreted as a *relative* offset (because
+   `.fv-ui .fv-panel` wins on `position`) and lift the card off the top edge. */
+.fv-scrub {
+  position: relative;
+  inset: auto;
+  transform: none;
+  width: 100%;
+  min-width: 0;
+  padding: var(--fv-space-2) 13px 9px;
+  pointer-events: auto;
+}
+
+.fv-scrub-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--fv-space-3);
+}
+
+.fv-scrub-label {
+  font-size: 11px;
+  font-weight: 620;
+  letter-spacing: var(--fv-track);
+}
+
+.fv-scrub-label i {
+  font-style: normal;
+  font-weight: 400;
+  color: var(--fv-ink-faint);
+}
+
+.fv-scrub-val {
+  font-family: var(--fv-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  font-weight: 660;
+  letter-spacing: -.01em;
+  color: var(--fv-accent-deep);
+}
+
+.fv-scrub-val span {
+  margin-left: 3px;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--fv-ink-faint);
+}
+
+/* --fv-p is the 0..1 slider position; the track is painted as a two-stop
+   gradient because ::-webkit-slider-runnable-track has no progress pseudo. */
+.fv-range {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 18px;
+  margin: 5px 0 0;
+  background: transparent;
+  cursor: ew-resize;
+}
+
+.fv-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right,
+    var(--fv-accent-fill) 0 calc(var(--fv-p, .375) * 100%),
+    rgba(255, 255, 255, .16) calc(var(--fv-p, .375) * 100%) 100%);
+}
+
+.fv-range::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, .16);
+}
+
+.fv-range::-moz-range-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--fv-accent-fill);
+}
+
+.fv-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 2px solid var(--fv-accent-hover);
+  border-radius: 50%;
+  background: #f3f9fe;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .55);
+}
+
+.fv-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--fv-accent-hover);
+  border-radius: 50%;
+  background: #f3f9fe;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .55);
+}
+
+.fv-range:hover::-webkit-slider-thumb { border-color: var(--fv-blues-2); }
+.fv-range:hover::-moz-range-thumb { border-color: var(--fv-blues-2); }
+
+.fv-scrub-axis {
+  position: relative;
+  height: 12px;
+  margin-top: 1px;
+}
+
+.fv-scrub-tick {
+  position: absolute;
+  left: calc(var(--fv-t, 0) * 100%);
+  transform: translateX(-50%);
+  font-family: var(--fv-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 9px;
+  color: var(--fv-ink-faint);
+  white-space: nowrap;
+}
+
+/* Δ = 0 is the published HOTA baseline — it gets the accent. */
+.fv-scrub-tick--zero,
+.fv-ui .fv-scrub-tick--zero {
+  color: var(--fv-accent);
+  font-weight: 600;
+}
+
+.fv-scrub-tick::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -4px;
+  width: 1px;
+  height: 3px;
+  background: var(--fv-line-strong);
+}
+
+/* ============================================================================
+   11. Transient status line
+   ========================================================================== */
+
+.fv-status {
+  position: absolute;
+  left: 50%;
+  /* Clears the scrubber card (76px tall + its 14px inset) by ~12px. */
+  bottom: calc(102px + var(--fv-safe-b));
+  transform: translateX(-50%);
+  padding: 5px 12px;
+  border: 1px solid var(--fv-line);
+  border-radius: var(--fv-radius-pill);
+  background-color: var(--fv-scrim-strong);
+  background-image: var(--fv-tint);
+  -webkit-backdrop-filter: blur(var(--fv-blur-sm));
+  backdrop-filter: blur(var(--fv-blur-sm));
+  box-shadow: var(--fv-shadow);
+  color: var(--fv-ink);
+  font-size: 11px;
+  letter-spacing: var(--fv-track);
+  white-space: nowrap;
+  max-width: calc(100vw - 32px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--fv-dur) var(--fv-ease);
+}
+
+.fv-status--on { opacity: 1; }
+
+/* ============================================================================
+   12. Loading overlay + progress bar
+   ========================================================================== */
+
+.fv-overlay,
+.fv-ui .fv-overlay,
+.fv-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  /* Deep, slightly blue-shifted vignette: dark enough to hide the first
+     unlit frame, warm-free so it reads as the same family as the panels. */
+  background-color: var(--fv-app-bg);
+  background-image: radial-gradient(120% 90% at 50% 40%,
+    rgba(26, 41, 60, .92), rgba(7, 11, 16, .98));
+  opacity: 1;
+  /* --fv-dur-fade, not --fv-dur-slow: ui.js removes the overlay from the box
+     tree 260 ms after starting this transition (see the token definition). */
+  transition: opacity var(--fv-dur-fade) var(--fv-ease);
+}
+
+.fv-overlay[hidden],
+.fv-loading[hidden] { display: none; }
+
+.fv-overlay--out,
+.fv-ui .fv-overlay--out { opacity: 0; }
+
+.fv-overlay-card {
+  width: min(340px, 78vw);
+  text-align: left;
+}
+
+.fv-overlay-eyebrow {
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .17em;
+  color: var(--fv-accent);
+}
+
+.fv-overlay-title {
+  margin: 4px 0 2px;
+  font-size: 18px;
+  font-weight: 680;
+  letter-spacing: .01em;
+  color: var(--fv-ink);
+}
+
+.fv-overlay-en {
+  margin-bottom: 16px;
+  font-size: 11px;
+  color: var(--fv-ink-soft);
+}
+
+.fv-bar,
+.fv-progress {
+  position: relative;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, .13);
+  overflow: hidden;
+}
+
+/* --fv-p is 0..1 fractional progress. */
+.fv-bar-fill,
+.fv-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(var(--fv-p, 0) * 100%);
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--fv-accent-fill), var(--fv-blues-3));
+  transition: width .22s var(--fv-ease);
+}
+
+/* Indeterminate: a fixed-width shuttle instead of a width animation. */
+.fv-bar--indeterminate .fv-bar-fill,
+.fv-ui .fv-bar--indeterminate .fv-bar-fill {
+  width: 32%;
+  transition: none;
+  animation: fv-slide 1.15s ease-in-out infinite;
+}
+
+@keyframes fv-slide {
+  0%   { left: -34%; }
+  100% { left: 100%; }
+}
+
+.fv-overlay-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--fv-space-3);
+  margin-top: var(--fv-space-2);
+  font-size: 10.5px;
+  color: var(--fv-ink-soft);
+}
+
+.fv-overlay-pct {
+  font-family: var(--fv-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--fv-ink-faint);
+}
+
+/* ============================================================================
+   13. Help / shortcuts popover
+   ========================================================================== */
+
+.fv-modal,
+.fv-help {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+
+.fv-modal[hidden],
+.fv-help[hidden] { display: none; }
+
+.fv-modal-backdrop,
+.fv-ui .fv-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 8, 13, .52);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+
+.fv-modal-card,
+.fv-ui .fv-modal-card {
+  position: relative;
+  width: min(390px, 88vw);
+  max-height: 82vh;
+  overflow: auto;
+  background-color: var(--fv-scrim-strong);
+  background-image: var(--fv-tint-strong);
+  border-radius: var(--fv-radius-lg);
+  box-shadow: var(--fv-shadow-lg), var(--fv-inset);
+}
+
+.fv-keys {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.fv-keys th {
+  padding: var(--fv-space-2) 13px 3px;
+  text-align: left;
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--fv-track-wide);
+  color: var(--fv-ink-faint);
+}
+
+.fv-keys td {
+  padding: 3px 13px;
+  font-size: 11px;
+  vertical-align: baseline;
+}
+
+.fv-keys td:first-child {
+  width: 78px;
+  white-space: nowrap;
+}
+
+.fv-keys tr:hover td { background: rgba(255, 255, 255, .05); }
+
+.fv-keys kbd,
+.fv-ui kbd.fv-kbd,
+.fv-ui .fv-keys kbd {
+  display: inline-block;
+  min-width: 21px;
+  padding: 1px 6px;
+  border: 1px solid var(--fv-line-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, .1);
+  color: var(--fv-ink);
+  font-family: var(--fv-mono);
+  font-size: 10px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.fv-modal-foot {
+  padding: 6px 13px var(--fv-space-3);
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--fv-ink-faint);
+}
+
+/* ============================================================================
+   14. Responsive
+   ----------------------------------------------------------------------------
+   860px: ui.js's own baseline switches the root to a stacked column and docks
+   the GUI as a fixed sheet. These rules keep the glass theme coherent through
+   that switch and make the stack scrollable.
+   820px: the contract's breakpoint — bottom sheet proper, horizontal legend,
+   44px touch targets.
+   ========================================================================== */
+
+/* 861–1023px: the scrubber zone bottoms out at its 300px min-width and would
+   reach into the 270px bottom-left column, so lift that column clear of it.
+   ui.js's baseline sheet carries the same rule, but this file restates
+   `.fv-zone--bl { bottom }` unconditionally at equal specificity and later in
+   document order, so without this copy the baseline rule never applied. */
+@media (min-width: 861px) and (max-width: 1023px) {
+  .fv-zone--bl { bottom: calc(106px + var(--fv-safe-b)); }
+}
+
+@media (max-width: 860px) {
+  .fv-ui {
+    display: flex;
+    flex-direction: column;
+    gap: var(--fv-space-2);
+    padding: calc(var(--fv-space-2) + var(--fv-safe-t))
+             calc(var(--fv-space-2) + var(--fv-safe-r))
+             calc(var(--fv-sheet-h) + var(--fv-space-2) + var(--fv-safe-b))
+             calc(var(--fv-space-2) + var(--fv-safe-l));
+    /* The stack can exceed the viewport; let it scroll. Touch-dragging a
+       panel (pointer-events:auto) still scrolls this ancestor, while empty
+       space keeps falling through to the canvas for orbiting. */
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .fv-zone {
+    position: static;
+    flex: 0 0 auto;
+    width: auto;
+    max-height: none;
+  }
+
+  .fv-zone--tl { order: 0; overflow: visible; }
+  .fv-zone--tr { order: 1; flex-direction: row; align-items: flex-start; justify-content: flex-end; }
+  .fv-zone--br { order: 2; margin-top: auto; align-items: flex-end; }
+  .fv-zone--bl { order: 3; width: auto; }
+
+  .fv-zone--bc {
+    order: 4;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    transform: none;
+  }
+
+  .fv-zone--br { max-height: none; }
+
+  .fv-status { bottom: calc(var(--fv-sheet-h) + 92px + var(--fv-safe-b)); }
+
+  .fv-title { padding: var(--fv-space-3); }
+  .fv-title h1 { font-size: 15px; }
+
+  /* -- legend shrinks (contract §5) --------------------------------------
+     ui.js's baseline sheet already shrinks the legend at this breakpoint, but
+     every one of those rules is a single class that this file also declares
+     unconditionally further up — and later in document order, so the baseline
+     never applied and the legend kept its full 132px / 21vh desktop size all
+     the way down to 821px. Restated here; the 820px block below then takes
+     over and flips the whole card to the horizontal layout. */
+  .fv-legend {
+    width: 104px;
+    padding: 6px 8px 7px;
+  }
+
+  .fv-legend-scale { height: clamp(96px, 16vh, 132px); }
+  .fv-legend-tick { font-size: 8.5px; }
+  .fv-legend-foot { font-size: 8.5px; }
+
+  /* Docked control sheet. */
+  .fv-sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 12;
+    width: auto;
+    border-top: 1px solid var(--fv-line);
+    border-radius: var(--fv-radius-lg) var(--fv-radius-lg) 0 0;
+    background-color: var(--fv-scrim-strong);
+    background-image: var(--fv-tint-strong);
+    -webkit-backdrop-filter: blur(var(--fv-blur-lg)) saturate(var(--fv-sat));
+    backdrop-filter: blur(var(--fv-blur-lg)) saturate(var(--fv-sat));
+    box-shadow: 0 -8px 30px rgba(2, 6, 12, .55), var(--fv-inset);
+    padding-bottom: var(--fv-safe-b);
+  }
+
+  .fv-sheet-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--fv-space-3);
+    width: 100%;
+    height: var(--fv-sheet-h);
+    padding: 0 var(--fv-space-4);
+    border: 0;
+    background: transparent;
+    color: var(--fv-ink);
+    font-size: 11.5px;
+    font-weight: 620;
+    letter-spacing: var(--fv-track);
+    cursor: pointer;
+  }
+
+  /* Chevron; rotates when the sheet is open. */
+  .fv-sheet-head::after {
+    content: "";
+    width: 0;
+    height: 0;
+    border-top: 5px solid var(--fv-ink-faint);
+    border-left: 4.5px solid transparent;
+    border-right: 4.5px solid transparent;
+    transition: transform .2s var(--fv-ease);
+  }
+
+  .fv-sheet-head[aria-expanded="true"]::after { transform: rotate(180deg); }
+
+  /* Collapsed until the handle is tapped — scoped to a host that actually
+     lives in a sheet, so a GUI mounted anywhere else is never shut with no
+     way to reopen it. */
+  .fv-sheet .fv-gui,
+  .fv-sheet .fv-gui-host {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height .24s var(--fv-ease);
+  }
+
+  .fv-sheet--open .fv-gui,
+  .fv-sheet--open .fv-gui-host {
+    max-height: 56vh;
+    overflow-y: auto;
+  }
+
+  /* Safety net for markup with no sheet at all: undo a blanket collapse. */
+  .fv-gui:not(.fv-sheet *),
+  .fv-gui-host:not(.fv-sheet *) {
+    max-height: none;
+    overflow: visible;
+  }
+
+  /* Inside the sheet the GUI is edge-to-edge: no second frame or shadow. */
+  .fv-gui .lil-gui.root,
+  .fv-gui-host .lil-gui.root,
+  .fv-ui .fv-gui-host .lil-gui.root {
+    border: 0;
+    border-top: 1px solid var(--fv-line-soft);
+    border-radius: 0;
+    box-shadow: none;
+    background-image: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .fv-modal-card { width: min(420px, 92vw); }
+}
+
+@media (max-width: 820px) {
+  :root {
+    --fv-sheet-h: 48px;             /* also drives the root's bottom padding */
+    --fv-tap: 44px;                 /* touch targets                         */
+    --fv-gap: var(--fv-space-2);
+  }
+
+  /* -- touch targets ------------------------------------------------------ */
+  .fv-btn,
+  .fv-ui .fv-btn {
+    min-height: 44px;
+    padding: 0 var(--fv-space-4);
+    font-size: 12px;
+  }
+
+  /* The ghost-pill rule in section 4 is `.fv-ui .fv-toolbar .fv-btn` — three
+     classes — so it outranks the two-class rule above and would keep the
+     toolbar at min-height:26px / 10.5px type on touch. That toolbar holds the
+     only chrome affordance in the top-right corner on a phone (快捷键/keys),
+     so it has to be restated here at matching specificity. Still a pill, just
+     a thumb-sized one. */
+  .fv-toolbar .fv-btn,
+  .fv-ui .fv-toolbar .fv-btn {
+    min-height: 44px;
+    padding: 0 var(--fv-space-4);
+    font-size: 12px;
+  }
+
+  .fv-toolbar .fv-btn kbd,
+  .fv-ui .fv-toolbar .fv-btn kbd { font-size: 10px; }
+
+  .fv-query-close {
+    width: 44px;
+    height: 44px;
+    font-size: 18px;
+  }
+
+  .fv-about > summary { min-height: 44px; }
+
+  .fv-range { height: 44px; }
+  .fv-range::-webkit-slider-thumb { width: 22px; height: 22px; margin-top: -9px; }
+  .fv-range::-moz-range-thumb { width: 20px; height: 20px; }
+  .fv-range::-webkit-slider-runnable-track { height: 5px; }
+  .fv-range::-moz-range-track,
+  .fv-range::-moz-range-progress { height: 5px; }
+
+  .fv-row { padding: 4px var(--fv-pad-x); }
+
+  /* Folder titles are the collapse targets, so they carry the 44px minimum.
+     It has to be declared on `.title` — on the container it is shadowed by
+     lil-gui's own `.lil-gui .title { --title-height: calc(...) }`, which would
+     have left the folder rows at 28 + 7*1.25 = 36.75px. */
+  .lil-gui .title,
+  .fv-gui-host .lil-gui .title { --title-height: 44px; }
+
+  .fv-gui .lil-gui,
+  .fv-gui-host .lil-gui,
+  .fv-ui .fv-gui-host .lil-gui {
+    --widget-height: 28px;
+    --font-size: 12px;
+    --input-font-size: 12px;
+    --padding: 8px;
+    --spacing: 7px;
+    --name-width: 55%;
+  }
+
+  /* -- legend becomes a horizontal bar -----------------------------------
+     The inline --fv-ramp gradient runs `to top`, which is wrong once the bar
+     is laid out horizontally, so the bar switches to the pre-built
+     --fv-ramp-h twin (identical stops, `to right`). Marker and ticks swap
+     their positioning axis to match. */
+  .fv-zone--br { align-items: stretch; }
+
+  .fv-legend {
+    width: auto;
+    padding: var(--fv-space-2) var(--fv-space-3) var(--fv-space-2);
+  }
+
+  .fv-legend-scale {
+    flex-direction: column;
+    gap: 3px;
+    height: auto;
+  }
+
+  .fv-legend-bar,
+  .fv-legend-gradient {
+    flex: 0 0 12px;
+    width: auto;
+    height: 12px;
+    background-image: var(--fv-ramp-h);
+  }
+
+  .fv-legend-marker {
+    left: calc(var(--fv-mk, 0) * 100%);
+    right: auto;
+    top: -3px;
+    bottom: -3px;
+    width: 0;
+    height: auto;
+    border-top: 0;
+    border-left: 1.5px solid var(--fv-ink);
+    transform: translateX(-.75px);
+  }
+
+  .fv-legend-marker::after {
+    left: -3.5px;
+    top: -4.5px;
+    border-left: 3.5px solid transparent;
+    border-right: 3.5px solid transparent;
+    border-top: 5px solid var(--fv-ink);
+    border-bottom: 0;
+  }
+
+  .fv-legend-ticks {
+    height: 13px;
+    flex: 0 0 13px;
+  }
+
+  .fv-legend-tick {
+    left: calc(var(--fv-t, 0) * 100%);
+    bottom: auto;
+    top: 0;
+    transform: translateX(-50%);
+    font-size: 9px;
+  }
+
+  /* Keep the end labels inside the panel instead of bleeding past the edge. */
+  .fv-legend-tick:first-child { transform: none; }
+  .fv-legend-tick:last-child { transform: translateX(-100%); }
+
+  .fv-legend-tick::before {
+    left: 50%;
+    top: -4px;
+    width: 1px;
+    height: 3px;
+  }
+
+  .fv-legend-foot {
+    margin-top: 5px;
+    font-size: 8.5px;
+  }
+
+  .fv-toolbar { flex: 1 1 auto; }
+  .fv-overlay-card { width: min(340px, 84vw); }
+}
+
+/* Very short viewports (landscape phones): drop the legend footnote and the
+   about-expander body so the essential readouts still fit. */
+@media (max-height: 480px) and (max-width: 900px) {
+  .fv-legend-foot { display: none; }
+  .fv-title h2 { display: none; }
+  .fv-sheet--open .fv-gui,
+  .fv-sheet--open .fv-gui-host { max-height: 42vh; }
+}
+
+/* Fine-pointer devices never need the 44px minimum, even on a small window.
+   Everything the 820px block sized with a *literal* 44 has to be undone here
+   by hand; only the things driven by --fv-tap follow the token automatically. */
+@media (pointer: fine) and (max-width: 820px) {
+  :root { --fv-tap: 32px; }
+  .fv-btn,
+  .fv-ui .fv-btn { min-height: 32px; }
+  .fv-toolbar .fv-btn,
+  .fv-ui .fv-toolbar .fv-btn { min-height: 28px; padding: 0 11px; font-size: 10.5px; }
+  .fv-query-close { width: 32px; height: 32px; font-size: 15px; }
+  .fv-about > summary { min-height: 32px; }
+  .lil-gui .title,
+  .fv-gui-host .lil-gui .title { --title-height: 32px; }
+  .fv-range { height: 22px; }
+  /* Thumb margin-top is always (trackHeight - thumbHeight) / 2 — webkit lays
+     the runnable track out from the top, so the thumb has to be pulled up by
+     half the difference to sit centred on it. */
+  .fv-range::-webkit-slider-thumb { width: 15px; height: 15px; margin-top: -5px; }
+  .fv-range::-moz-range-thumb { width: 13px; height: 13px; }
+}
+
+/* ============================================================================
+   15. Accessibility and output modes
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after,
+  .fv-ui *,
+  .lil-gui * {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* The shuttle would otherwise freeze mid-track and read as a stalled load:
+     make the indeterminate bar a static, full-width, dimmed track instead. */
+  .fv-bar--indeterminate .fv-bar-fill,
+  .fv-ui .fv-bar--indeterminate .fv-bar-fill {
+    left: 0;
+    width: 100%;
+    opacity: .5;
+    animation: none !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --fv-scrim: rgba(6, 10, 15, .93);
+    --fv-scrim-strong: rgba(4, 7, 11, .97);
+    --fv-ink: #ffffff;
+    --fv-ink-soft: #d3dfea;
+    --fv-ink-faint: #b3c2d0;
+    --fv-line: rgba(255, 255, 255, .32);
+    --fv-line-soft: rgba(255, 255, 255, .18);
+    --fv-accent: #9ecae1;
+  }
+}
+
+@media (forced-colors: active) {
+  .fv-panel,
+  .fv-card,
+  .fv-btn,
+  .fv-modal-card,
+  .fv-sheet,
+  .lil-gui {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    box-shadow: none;
+  }
+  .fv-ui a { color: LinkText; }
+  /* Gradients are dropped in forced colours; keep the ramp visible. */
+  .fv-legend-bar,
+  .fv-legend-gradient { forced-color-adjust: none; }
+}
+
+/* Print: the map alone. Every piece of chrome is hidden so a print-to-PDF or
+   a screenshot of the print preview yields a clean figure. */
+@media print {
+  html,
+  body {
+    overflow: visible;
+    background: #fff;
+  }
+
+  .fv-ui,
+  .fv-overlay,
+  .fv-loading,
+  .fv-modal,
+  .fv-help,
+  .fv-status,
+  .fv-scrub,
+  .fv-sheet,
+  .fv-toolbar,
+  .lil-gui {
+    display: none !important;
+  }
+
+  /* .fv-fatal is deliberately NOT hidden: if boot failed there is no map to
+     print, and the message is the only useful thing on the page. */
+  .fv-fatal {
+    position: static;
+    transform: none;
+    max-height: none;
+    border-color: #900;
+    background: #fff;
+    color: #900;
+    box-shadow: none;
+  }
+
+  .fv-canvas,
+  canvas.fv-canvas,
+  body > canvas {
+    position: static !important;
+    width: 100% !important;
+    height: auto !important;
+    max-width: 100%;
+    box-shadow: none;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  @page { margin: 0; }
+}

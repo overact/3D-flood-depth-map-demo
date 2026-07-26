@@ -1,0 +1,10 @@
+# superseded raster encodings — the viewer reads data3d/*.png now.
+# They may still be sitting in the working tree; keep them out of the repo.
+data3d/*.gz
+data3d/*.bin
+
+# local scratch
+*.pyc
+__pycache__/
+.DS_Store
+Thumbs.db

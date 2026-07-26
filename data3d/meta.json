@@ -1,0 +1,51 @@
+{
+ "grid": {
+  "nx": 1536,
+  "ny": 1426
+ },
+ "wsurfGrid": {
+  "nx": 384,
+  "ny": 357
+ },
+ "extent": {
+  "width": 39230.0,
+  "height": 36414.1748046875,
+  "cx": 17023665.0,
+  "cy": -3634079.5289436853,
+  "crs": "EPSG:3857",
+  "left": 17004050.0,
+  "right": 17043280.0,
+  "top": -3615872.4415413416,
+  "bottom": -3652286.616346029,
+  "latCentre": -31.0806
+ },
+ "elev": {
+  "min": -12.0,
+  "max": 340.0
+ },
+ "need": {
+  "min": -8.0,
+  "max": 8.0,
+  "never": 65535
+ },
+ "flags": {
+  "wet": 1,
+  "sea": 2,
+  "outside": 4
+ },
+ "rampMax": 2.5,
+ "depthMaxObserved": 6.942405700683594,
+ "stats": {
+  "observedWetCells": 395029,
+  "cellX": 25.540364583333332,
+  "cellY": 25.535886959808906,
+  "mercatorAreaFactor": 0.7334927803778298,
+  "observedAreaKm2": 188.97435099894236,
+  "observedVolumeMm3": 138.0449256115132
+ },
+ "source": {
+  "depth": "HOTA final_depth.tif (5.84 m, EPSG:3857) - SegFormer+HOTA extent with dual-constraint 3D depth refinement, arXiv:2507.07585",
+  "dem": "Kempsey_dem_aligned.tif (5.84 m, GA 5 m LiDAR, AHD)",
+  "basemap": "QGIS canvas render of the project aerial/S2 basemap; inundated pixels are a smooth fill, not imagery"
+ }
+}
