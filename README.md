@@ -1,7 +1,11 @@
 # 3D-flood-depth-map-demo
 
-An interactive [**3D flood depth map**](https://overact.github.io/3D-flood-depth-map-demo/) of
-Kempsey, NSW, Australia — the 26 March 2021 Macleay River flood.
+## Live visualization
+
+**[Open the interactive 3D flood depth map →](https://overact.github.io/3D-flood-depth-map-demo/)**
+
+An interactive 3D flood depth map of Kempsey, NSW, Australia — the 26 March 2021 Macleay
+River flood.
 
 The flood is rendered as a real water surface in 3D: its height is HOTA's published water
 surface, and a slider raises or lowers it, re-solving the inundated extent by hydraulic
