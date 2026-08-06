@@ -40,9 +40,19 @@ function pickInitialQuality() {
   return 'high';
 }
 
+/**
+ * Hover highlight costs a connected-component flood fill over a 2.19 M cell grid —
+ * measured 24 ms at Δ = 0 and 56 ms at Δ = +5 on a desktop CPU, so 2-4x that on a
+ * phone. A touch device has no hover to begin with (pointermove only fires mid-drag,
+ * where the gesture is a camera move), so it would pay the whole bill for nothing.
+ */
+const COARSE_POINTER = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+
 const state = {
   waterOffset: 0,
-  vertExag: 7,
+  // 14x. The DEM spans 352 m of relief over 39 km; at 1:1 the floodplain is a sheet of
+  // paper and the flood reads as a stain on it rather than as water with a volume.
+  vertExag: 14,
   sunAzimuth: 138,
   sunElevation: 34,
   waveAmp: 1,
@@ -51,7 +61,7 @@ const state = {
   science: false,
   showWater: true,
   autoRotate: true,
-  hoverFx: true,
+  hoverFx: !COARSE_POINTER,
   quality: pickInitialQuality(),
 };
 
@@ -148,7 +158,28 @@ async function init() {
 
   controls = new MapControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  controls.dampingFactor = 0.06;
+  // OrbitControls applies damping as `delta *= (1 - dampingFactor)` per frame, so a SMALL
+  // factor means a long tail: decaying to 1% of a flick takes ln(0.01)/ln(0.94) = 74 frames
+  // at 0.06 — over a second of drift after the mouse stops, which is what reads as "the
+  // camera is not following me". 0.14 gets there in 31 frames and still smooths jitter.
+  controls.dampingFactor = 0.14;
+  // MapControls ships LEFT = pan, RIGHT = rotate. Swapped to the orbit convention — left
+  // drag turns the model, right drag slides it — which is what the shortcut card has always
+  // told the user ("drag to orbit") and what every other 3D viewer does. Click-to-query is
+  // unaffected: onPointerUp only treats a LEFT press that moved < 5 px as a query.
+  controls.mouseButtons = {
+    LEFT: THREE.MOUSE.ROTATE,
+    MIDDLE: THREE.MOUSE.DOLLY,
+    RIGHT: THREE.MOUSE.PAN,
+  };
+  // Touch has to move with it. MapControls defaults to ONE = PAN / TWO = DOLLY_ROTATE,
+  // so leaving this alone would have meant one finger pans on a phone while one button
+  // orbits on a desktop — and the shortcut card would have been lying to the touch user,
+  // who is the one least able to discover the real binding by experiment.
+  controls.touches = {
+    ONE: THREE.TOUCH.ROTATE,
+    TWO: THREE.TOUCH.DOLLY_PAN,
+  };
   controls.maxPolarAngle = Math.PI * 0.495;
   controls.minDistance = 300;
   controls.maxDistance = 120000;
@@ -163,6 +194,11 @@ async function init() {
     pointerStart = { x: e.clientX, y: e.clientY, t: performance.now(), b: e.button };
   });
   renderer.domElement.addEventListener('pointerup', onPointerUp);
+  // A cancelled press (OS gesture, context menu, the browser stealing the pointer) never
+  // delivers pointerup, so without this `pointerStart` stays truthy forever — and since
+  // updateHover now skips while it is set, one cancelled press would kill the hover
+  // highlight for the rest of the session.
+  renderer.domElement.addEventListener('pointercancel', () => { pointerStart = null; });
   renderer.domElement.addEventListener('pointermove', (e) => {
     const r = renderer.domElement.getBoundingClientRect();
     hoverNdc = new THREE.Vector2(
@@ -176,8 +212,20 @@ async function init() {
 
   lastT = performance.now() / 1000;
   // Small inspection hook: handy when tuning, and harmless in production.
+  //
+  // `camera` here is the pre-existing read-only REPORTER (returns pos/target for
+  // copying into a ?cam= string). The live three.js objects therefore live under
+  // `three` — an earlier version of this hook put `camera` at the top level and
+  // the reporter below silently overwrote it, so `__fv.camera.position` was a
+  // function with no `.position` and every headless camera move failed.
   window.__fv = {
     state,
+    three: { renderer, scene, get camera() { return camera; }, get controls() { return controls; } },
+    get dataset() { return dataset; },
+    pickSurface: (x, y) => pickSurface(new THREE.Vector2(x, y)),
+    solveHoverBody: (i) => solveHoverBody(i),
+    get hoverCells() { return hoverCells; },
+    renderOnce: () => render(),
     get uniforms() { return waterMat ? waterMat.uniforms : null; },
     get hover() { return { strength: hoverStrength, cells: hoverCells, active: hoverActive }; },
     meta: () => dataset.meta,
@@ -253,7 +301,7 @@ function buildScene() {
   if (!waterMat) {
     waterMat = createWaterMaterial({
       textures,
-      grid: { EW: grid.EW, EH: grid.EH },
+      grid: { EW: grid.EW, EH: grid.EH, nx: grid.nx, ny: grid.ny },
       envMap: envCubeRT ? envCubeRT.texture : null,
     });
   }
@@ -467,14 +515,23 @@ function solveHoverBody(start) {
   const { nx, ny } = meta.grid;
   const need = arrays.need, flags = arrays.flags;
   const off = state.waterOffset;
+  const wet = (i) => !(flags[i] & 4) && off >= need[i];
+  // Bail BEFORE clearing. This used to wipe the mask first and only then discover the start
+  // cell was dry, so every time the cursor grazed a bank inside a body — which on a
+  // floodplain this fractal is constantly — the highlight was destroyed and the next wet
+  // frame paid a full 24-56 ms re-solve. Leaving the mask alone means a dry pixel just fades
+  // the highlight out and moving back on resumes it for free.
+  //
+  // updateHover() now makes the same test before it calls in, so in the viewer this bail is
+  // only reached through the __fv debug hook — it stays because it is the invariant the
+  // mask-clearing below depends on, not because the hot path needs it.
+  if (!wet(start)) { hoverCells = 0; return false; }
   if (!hoverMask) {
     hoverMask = new Uint8Array(nx * ny);
     hoverQueue = new Int32Array(nx * ny);
   } else {
     hoverMask.fill(0);
   }
-  const wet = (i) => !(flags[i] & 4) && off >= need[i];
-  if (!wet(start)) { hoverCells = 0; return false; }
 
   const q = hoverQueue;
   let head = 0, tail = 0;
@@ -513,10 +570,14 @@ function solveHoverBody(start) {
 function updateHover(dt) {
   if (!waterMat) return;
   let want = 0;
-  if (state.hoverFx && hoverNdc && state.showWater) {
+  // Not while a mouse button is down and not during a fly tour: both mean the camera is
+  // moving, and a 24-56 ms flood fill dropped into the middle of a drag is precisely the
+  // stall that makes the controls feel disconnected from the mouse. Hover is an idle-time
+  // affordance, so it only runs when the pointer is idle.
+  if (state.hoverFx && hoverNdc && state.showWater && !pointerStart && !tour) {
     const p = pickSurface(hoverNdc);
     if (p) {
-      const { grid, meta } = dataset;
+      const { arrays, grid, meta } = dataset;
       const ix = Math.round(((p.x + grid.EW / 2) / grid.EW) * meta.grid.nx - 0.5);
       const iz = Math.round(((p.z + grid.EH / 2) / grid.EH) * meta.grid.ny - 0.5);
       if (ix >= 0 && iz >= 0 && ix < meta.grid.nx && iz < meta.grid.ny) {
@@ -524,9 +585,10 @@ function updateHover(dt) {
         const inCurrent = hoverMask && hoverMask[idx] && hoverMaskOffset === state.waterOffset;
         if (inCurrent) {
           want = 1;
-        } else {
-          // Re-solving is ~15 ms worst case, so do it only when the pointer is genuinely in
-          // a different body, and no more than ten times a second while it sweeps around.
+        } else if (!(arrays.flags[idx] & 4) && state.waterOffset >= arrays.need[idx]) {
+          // Two array reads decide whether this cell is even wet. Doing that BEFORE the rate
+          // limiter means a dry pixel no longer burns the 100 ms budget that the next
+          // genuinely-new body needs, so entering a new pool highlights immediately.
           const now = performance.now();
           if (now - hoverLastSolve > 100) {
             hoverLastSolve = now;

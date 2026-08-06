@@ -287,6 +287,20 @@ body > canvas {
 
 .fv-ui * { box-sizing: border-box; }
 
+/* Hide-interface mode (the eye button on a phone, `U` anywhere). Not scoped to
+   a breakpoint: wanting the scene without the chrome — to look at it, or to
+   grab a clean screenshot — is not a small-screen need.
+
+   `visibility`, not `display`: the drawer keeps its box, so nothing reflows on
+   the way out and the button that brings the UI back does not move out from
+   under the thumb that just pressed it. `.fv-mobtools` is the exception that
+   stays, and it is itself display:none above 860px, where the keyboard is the
+   way back in. */
+.fv-ui--hidden > *:not(.fv-mobtools) {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .fv-ui button,
 .fv-ui input,
 .fv-ui select,
@@ -1602,11 +1616,19 @@ body > canvas {
 /* ============================================================================
    14. Responsive
    ----------------------------------------------------------------------------
-   860px: ui.js's own baseline switches the root to a stacked column and docks
-   the GUI as a fixed sheet. These rules keep the glass theme coherent through
-   that switch and make the stack scrollable.
-   820px: the contract's breakpoint — bottom sheet proper, horizontal legend,
-   44px touch targets.
+   860px: the four-corner desktop layout collapses into ONE bottom drawer with
+   four tabs (Info / Stats / Legend / Controls), a title capsule top-left and
+   two icon buttons top-right. Rationale and the measurement that forced it are
+   in js/ui.js above the drawer code: the previous stacked-column layout put
+   83.6 % of a 390x844 screen under glass, leaving the 3D scene — the whole
+   point of the page — visible only through the gutters. Collapsed, the drawer
+   is the tab row plus the Δ scrubber, about 17 % of that screen.
+
+   Everything the drawer needs is inside this block, so the desktop layout above
+   is untouched: nothing here leaks past 860px. (The one deliberate exception is
+   `.fv-ui--hidden` in section 3, which is global on purpose — see the note there.)
+
+   820px: touch sizing only — 44px targets, per the contract.
    ========================================================================== */
 
 /* 861–1023px: the scrubber zone bottoms out at its 300px min-width and would
@@ -1619,229 +1641,304 @@ body > canvas {
 }
 
 @media (max-width: 860px) {
+  /* -- the root becomes the drawer's stacking context ---------------------
+     Bottom-anchored flow: [ active tab panel ] [ tab bar ] [ Δ scrubber ].
+     The capsule, the icon buttons, the status pill, the help dialog and the
+     loading splash stay absolutely positioned over the canvas. */
   .fv-ui {
     display: flex;
     flex-direction: column;
-    gap: var(--fv-space-2);
-    padding: calc(var(--fv-space-2) + var(--fv-safe-t))
-             calc(var(--fv-space-2) + var(--fv-safe-r))
-             calc(var(--fv-sheet-h) + var(--fv-space-2) + var(--fv-safe-b))
-             calc(var(--fv-space-2) + var(--fv-safe-l));
-    /* The stack can exceed the viewport; let it scroll. Touch-dragging a
-       panel (pointer-events:auto) still scrolls this ancestor, while empty
-       space keeps falling through to the canvas for orbiting. */
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
+    justify-content: flex-end;
+    padding: 0;
+    gap: 0;
   }
 
   .fv-zone {
     position: static;
-    flex: 0 0 auto;
-    width: auto;
-    max-height: none;
-  }
-
-  .fv-zone--tl { order: 0; overflow: visible; }
-  .fv-zone--tr { order: 1; flex-direction: row; align-items: flex-start; justify-content: flex-end; }
-  .fv-zone--br { order: 2; margin-top: auto; align-items: flex-end; }
-  .fv-zone--bl { order: 3; width: auto; }
-
-  .fv-zone--bc {
-    order: 4;
     width: auto;
     min-width: 0;
-    max-width: none;
+    max-height: none;
     transform: none;
+    flex: 0 1 auto;
   }
 
-  .fv-zone--br { max-height: none; }
-
-  .fv-status { bottom: calc(var(--fv-sheet-h) + 92px + var(--fv-safe-b)); }
-
-  .fv-title { padding: var(--fv-space-3); }
-  .fv-title h1 { font-size: 15px; }
-
-  /* -- legend shrinks (contract §5) --------------------------------------
-     ui.js's baseline sheet already shrinks the legend at this breakpoint, but
-     every one of those rules is a single class that this file also declares
-     unconditionally further up — and later in document order, so the baseline
-     never applied and the legend kept its full 132px / 21vh desktop size all
-     the way down to 821px. Restated here; the 820px block below then takes
-     over and flips the whole card to the horizontal layout. */
-  .fv-legend {
-    width: 104px;
-    padding: 6px 8px 7px;
-  }
-
-  .fv-legend-scale { height: clamp(96px, 16vh, 132px); }
-  .fv-legend-tick { font-size: 8.5px; }
-  .fv-legend-foot { font-size: 8.5px; }
-
-  /* Docked control sheet. */
-  .fv-sheet {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 12;
-    width: auto;
-    border-top: 1px solid var(--fv-line);
+  /* -- tab panels ---------------------------------------------------------
+     All four are display:none and only the selected one is laid out, so a
+     hidden panel costs no layout, no scroll height and no hit-testing. The
+     45vh ceiling is what keeps the drawer from becoming the old full-screen
+     stack again when a tab holds a lot of copy (Info, with About expanded). */
+  .fv-zone--tl,
+  .fv-zone--tr,
+  .fv-zone--bl,
+  .fv-zone--br {
+    order: 1;
+    display: none;
+    align-items: stretch;
+    justify-content: flex-start;
+    max-height: 45vh;
+    padding: var(--fv-space-3) var(--fv-space-4) var(--fv-space-2);
+    gap: var(--fv-space-3);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    pointer-events: auto;
     border-radius: var(--fv-radius-lg) var(--fv-radius-lg) 0 0;
     background-color: var(--fv-scrim-strong);
     background-image: var(--fv-tint-strong);
     -webkit-backdrop-filter: blur(var(--fv-blur-lg)) saturate(var(--fv-sat));
     backdrop-filter: blur(var(--fv-blur-lg)) saturate(var(--fv-sat));
-    box-shadow: 0 -8px 30px rgba(2, 6, 12, .55), var(--fv-inset);
-    padding-bottom: var(--fv-safe-b);
+    box-shadow: 0 -10px 34px rgba(2, 6, 12, .5);
   }
 
-  .fv-sheet-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--fv-space-3);
-    width: 100%;
-    height: var(--fv-sheet-h);
-    padding: 0 var(--fv-space-4);
+  .fv-ui[data-tab="info"]     .fv-zone--tl,
+  .fv-ui[data-tab="controls"] .fv-zone--tr,
+  .fv-ui[data-tab="stats"]    .fv-zone--bl,
+  .fv-ui[data-tab="legend"]   .fv-zone--br { display: flex; }
+
+  /* -- cards lose their own frame inside the drawer -----------------------
+     One glass surface, not a pile of floating cards. `.fv-ui .fv-panel` is the
+     two-class selector the desktop skin uses, so this has to match it to win.
+
+     `:not(.fv-modal-card)` is load-bearing: the shortcuts dialog is also a
+     `.fv-panel`, but it floats over the scene rather than sitting in the drawer.
+     Without the exclusion it lost its background, radius and shadow on every
+     viewport under 860px and the key table rendered bare on the backdrop —
+     `.fv-ui .fv-modal-card` is the same specificity and EARLIER in the file, and
+     a media query adds none, so this rule beat it on source order alone. */
+  .fv-ui .fv-panel:not(.fv-modal-card) {
+    background: none;
     border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  /* -- tab bar ------------------------------------------------------------ */
+  .fv-tabs {
+    order: 2;
+    display: flex;
+    pointer-events: auto;
+    padding: 0 var(--fv-space-2);
+    gap: 2px;
+    border-top: 1px solid var(--fv-line-soft);
+    background-color: var(--fv-scrim-strong);
+    background-image: var(--fv-tint-strong);
+    -webkit-backdrop-filter: blur(var(--fv-blur-lg)) saturate(var(--fv-sat));
+    backdrop-filter: blur(var(--fv-blur-lg)) saturate(var(--fv-sat));
+  }
+
+  /* Collapsed, the tab bar is the top of the drawer and carries the radius
+     and the shadow the panel would otherwise own. */
+  .fv-ui[data-tab="none"] .fv-tabs {
+    border-top: 0;
+    border-radius: var(--fv-radius-lg) var(--fv-radius-lg) 0 0;
+    box-shadow: 0 -10px 34px rgba(2, 6, 12, .5);
+  }
+
+  .fv-tab {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: max(40px, var(--fv-tap));
+    padding: 0 2px;
+    border: 0;
+    border-top: 2px solid transparent;
     background: transparent;
+    color: var(--fv-ink-soft);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: var(--fv-track);
+    cursor: pointer;
+    transition: color var(--fv-dur) var(--fv-ease),
+                border-color var(--fv-dur) var(--fv-ease);
+  }
+
+  .fv-tab-label {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fv-tab--on {
+    color: var(--fv-accent);
+    border-top-color: var(--fv-accent);
+  }
+
+  /* -- Δ scrubber: the one control that is never behind a tab ------------- */
+  .fv-zone--bc {
+    order: 3;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    /* The zone itself has to take pointer events, not just the card inside it
+       (`.fv-zone > *` is what normally gets `auto`). This strip is opaque glass
+       and includes the whole home-indicator safe area, so without this a thumb
+       resting on the bottom edge fell through to the canvas and — now that LEFT
+       is ROTATE — spun the camera. */
+    pointer-events: auto;
+    padding: 0 var(--fv-space-2)
+             calc(var(--fv-space-2) + var(--fv-safe-b));
+    background-color: var(--fv-scrim-strong);
+    background-image: var(--fv-tint-strong);
+    -webkit-backdrop-filter: blur(var(--fv-blur-lg)) saturate(var(--fv-sat));
+    backdrop-filter: blur(var(--fv-blur-lg)) saturate(var(--fv-sat));
+    border-top: 1px solid var(--fv-line-soft);
+  }
+
+  .fv-scrub { padding: var(--fv-space-2) var(--fv-space-3) var(--fv-space-1); }
+
+  /* -- title capsule, top-left ------------------------------------------- */
+  .fv-cap {
+    display: flex;
+    position: absolute;
+    top: calc(var(--fv-space-2) + var(--fv-safe-t));
+    left: calc(var(--fv-space-2) + var(--fv-safe-l));
+    max-width: calc(100% - 128px - var(--fv-safe-l) - var(--fv-safe-r));
+    align-items: center;
+    gap: var(--fv-space-2);
+    min-height: max(34px, var(--fv-tap));
+    padding: 0 var(--fv-space-3);
+    border: 1px solid var(--fv-line);
+    border-radius: var(--fv-radius-pill);
+    background-color: var(--fv-scrim);
+    background-image: var(--fv-tint);
+    -webkit-backdrop-filter: blur(var(--fv-blur)) saturate(var(--fv-sat));
+    backdrop-filter: blur(var(--fv-blur)) saturate(var(--fv-sat));
+    box-shadow: var(--fv-inset), 0 4px 16px rgba(2, 6, 12, .4);
     color: var(--fv-ink);
     font-size: 11.5px;
     font-weight: 620;
     letter-spacing: var(--fv-track);
     cursor: pointer;
+    pointer-events: auto;
   }
 
-  /* Chevron; rotates when the sheet is open. */
-  .fv-sheet-head::after {
-    content: "";
-    width: 0;
-    height: 0;
-    border-top: 5px solid var(--fv-ink-faint);
-    border-left: 4.5px solid transparent;
-    border-right: 4.5px solid transparent;
-    transition: transform .2s var(--fv-ease);
+  .fv-cap-dot {
+    flex: 0 0 7px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--fv-accent);
+    box-shadow: 0 0 0 3px rgba(33, 113, 181, .18);
   }
 
-  .fv-sheet-head[aria-expanded="true"]::after { transform: rotate(180deg); }
-
-  /* Collapsed until the handle is tapped — scoped to a host that actually
-     lives in a sheet, so a GUI mounted anywhere else is never shut with no
-     way to reopen it. */
-  .fv-sheet .fv-gui,
-  .fv-sheet .fv-gui-host {
-    max-height: 0;
+  .fv-cap-text {
     overflow: hidden;
-    transition: max-height .24s var(--fv-ease);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .fv-sheet--open .fv-gui,
-  .fv-sheet--open .fv-gui-host {
-    max-height: 56vh;
-    overflow-y: auto;
+  .fv-cap[aria-expanded="true"] {
+    color: var(--fv-accent);
+    border-color: var(--fv-line-strong);
   }
 
-  /* Safety net for markup with no sheet at all: undo a blanket collapse. */
-  .fv-gui:not(.fv-sheet *),
-  .fv-gui-host:not(.fv-sheet *) {
+  /* -- icon buttons, top-right ------------------------------------------- */
+  .fv-mobtools {
+    display: flex;
+    position: absolute;
+    top: calc(var(--fv-space-2) + var(--fv-safe-t));
+    right: calc(var(--fv-space-2) + var(--fv-safe-r));
+    gap: var(--fv-space-2);
+    pointer-events: auto;
+  }
+
+  .fv-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: max(34px, var(--fv-tap));
+    height: max(34px, var(--fv-tap));
+    padding: 0;
+    border: 1px solid var(--fv-line);
+    border-radius: var(--fv-radius-pill);
+    background-color: var(--fv-scrim);
+    background-image: var(--fv-tint);
+    -webkit-backdrop-filter: blur(var(--fv-blur)) saturate(var(--fv-sat));
+    backdrop-filter: blur(var(--fv-blur)) saturate(var(--fv-sat));
+    box-shadow: var(--fv-inset), 0 4px 16px rgba(2, 6, 12, .4);
+    color: var(--fv-ink-soft);
+    cursor: pointer;
+    pointer-events: auto;
+  }
+
+  .fv-icon-btn[aria-pressed="true"] {
+    color: var(--fv-accent);
+    border-color: var(--fv-line-strong);
+  }
+
+  /* In hide-interface mode the help button goes too — only the eye that brings
+     the interface back survives. (The rule that hides everything else is not
+     scoped to this breakpoint; see section 3.) */
+  .fv-ui--hidden .fv-mobtools > *:not(:last-child) { display: none; }
+
+  /* -- the desktop-only chrome the drawer replaces ------------------------ */
+  .fv-toolbar { display: none; }          /* → .fv-mobtools                  */
+  .fv-sheet-head { display: none; }       /* → the Controls tab              */
+
+  /* The GUI is always expanded inside its tab; the tab IS the disclosure. */
+  .fv-sheet {
+    position: static;
+    width: 100%;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    padding-bottom: 0;
+  }
+
+  .fv-sheet .fv-gui,
+  .fv-sheet .fv-gui-host,
+  .fv-gui,
+  .fv-gui-host {
     max-height: none;
     overflow: visible;
   }
 
-  /* Inside the sheet the GUI is edge-to-edge: no second frame or shadow. */
   .fv-gui .lil-gui.root,
   .fv-gui-host .lil-gui.root,
   .fv-ui .fv-gui-host .lil-gui.root {
+    width: 100%;
     border: 0;
-    border-top: 1px solid var(--fv-line-soft);
     border-radius: 0;
     box-shadow: none;
+    background: none;
     background-image: none;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
 
-  .fv-modal-card { width: min(420px, 92vw); }
-}
+  /* lil-gui's own root title says "Controls" — so does the tab that is already
+     selected to show it. Drop the inner one; the folder rows below it are the
+     content. Scoped to `.root` so the four folder titles keep their headers. */
+  .fv-gui-host .lil-gui.root > .title,
+  .fv-ui .fv-gui-host .lil-gui.root > .title { display: none; }
 
-@media (max-width: 820px) {
-  :root {
-    --fv-sheet-h: 48px;             /* also drives the root's bottom padding */
-    --fv-tap: 44px;                 /* touch targets                         */
-    --fv-gap: var(--fv-space-2);
-  }
+  /* -- cards inside the drawer ------------------------------------------- */
+  /* The card frame is gone, so the card's own padding would double the zone's.
+     The title stays a real heading here — the capsule is a 34px pill that
+     truncates, not a substitute for the page's H1. */
+  .fv-title { padding: 0 0 var(--fv-space-2); }
+  .fv-title h1 { font-size: 16px; }
+  .fv-title .fv-eyebrow { font-size: 9px; }
 
-  /* -- touch targets ------------------------------------------------------ */
-  .fv-btn,
-  .fv-ui .fv-btn {
-    min-height: 44px;
-    padding: 0 var(--fv-space-4);
-    font-size: 12px;
-  }
+  /* The stats card's Δ row is the desktop mirror of the scrubber, which on
+     desktop sits in a different corner. In the drawer they are 100px apart in
+     the same column, reading the same number — so the card drops its copy and
+     the always-visible scrubber is the single Δ readout. */
+  .fv-stats .fv-row--hero,
+  .fv-stats .fv-body > .fv-rule { display: none; }
 
-  /* The ghost-pill rule in section 4 is `.fv-ui .fv-toolbar .fv-btn` — three
-     classes — so it outranks the two-class rule above and would keep the
-     toolbar at min-height:26px / 10.5px type on touch. That toolbar holds the
-     only chrome affordance in the top-right corner on a phone (快捷键/keys),
-     so it has to be restated here at matching specificity. Still a pill, just
-     a thumb-sized one. */
-  .fv-toolbar .fv-btn,
-  .fv-ui .fv-toolbar .fv-btn {
-    min-height: 44px;
-    padding: 0 var(--fv-space-4);
-    font-size: 12px;
-  }
+  .fv-legend { width: auto; padding: 0 0 var(--fv-space-1); }
 
-  .fv-toolbar .fv-btn kbd,
-  .fv-ui .fv-toolbar .fv-btn kbd { font-size: 10px; }
-
-  .fv-query-close {
-    width: 44px;
-    height: 44px;
-    font-size: 18px;
-  }
-
-  .fv-about > summary { min-height: 44px; }
-
-  .fv-range { height: 44px; }
-  .fv-range::-webkit-slider-thumb { width: 22px; height: 22px; margin-top: -9px; }
-  .fv-range::-moz-range-thumb { width: 20px; height: 20px; }
-  .fv-range::-webkit-slider-runnable-track { height: 5px; }
-  .fv-range::-moz-range-track,
-  .fv-range::-moz-range-progress { height: 5px; }
-
-  .fv-row { padding: 4px var(--fv-pad-x); }
-
-  /* Folder titles are the collapse targets, so they carry the 44px minimum.
-     It has to be declared on `.title` — on the container it is shadowed by
-     lil-gui's own `.lil-gui .title { --title-height: calc(...) }`, which would
-     have left the folder rows at 28 + 7*1.25 = 36.75px. */
-  .lil-gui .title,
-  .fv-gui-host .lil-gui .title { --title-height: 44px; }
-
-  .fv-gui .lil-gui,
-  .fv-gui-host .lil-gui,
-  .fv-ui .fv-gui-host .lil-gui {
-    --widget-height: 28px;
-    --font-size: 12px;
-    --input-font-size: 12px;
-    --padding: 8px;
-    --spacing: 7px;
-    --name-width: 55%;
-  }
-
-  /* -- legend becomes a horizontal bar -----------------------------------
-     The inline --fv-ramp gradient runs `to top`, which is wrong once the bar
-     is laid out horizontally, so the bar switches to the pre-built
-     --fv-ramp-h twin (identical stops, `to right`). Marker and ticks swap
-     their positioning axis to match. */
+  /* Horizontal ramp: the drawer is wide and short, so the vertical bar would
+     waste the width and force the panel taller. The inline --fv-ramp gradient
+     runs `to top`, hence the pre-built `to right` twin. */
   .fv-zone--br { align-items: stretch; }
-
-  .fv-legend {
-    width: auto;
-    padding: var(--fv-space-2) var(--fv-space-3) var(--fv-space-2);
-  }
 
   .fv-legend-scale {
     flex-direction: column;
@@ -1851,9 +1948,9 @@ body > canvas {
 
   .fv-legend-bar,
   .fv-legend-gradient {
-    flex: 0 0 12px;
+    flex: 0 0 14px;
     width: auto;
-    height: 12px;
+    height: 14px;
     background-image: var(--fv-ramp-h);
   }
 
@@ -1878,20 +1975,16 @@ body > canvas {
     border-bottom: 0;
   }
 
-  .fv-legend-ticks {
-    height: 13px;
-    flex: 0 0 13px;
-  }
+  .fv-legend-ticks { flex: 0 0 13px; height: 13px; }
 
   .fv-legend-tick {
     left: calc(var(--fv-t, 0) * 100%);
-    bottom: auto;
     top: 0;
+    bottom: auto;
     transform: translateX(-50%);
     font-size: 9px;
   }
 
-  /* Keep the end labels inside the panel instead of bleeding past the edge. */
   .fv-legend-tick:first-child { transform: none; }
   .fv-legend-tick:last-child { transform: translateX(-100%); }
 
@@ -1902,43 +1995,105 @@ body > canvas {
     height: 3px;
   }
 
-  .fv-legend-foot {
-    margin-top: 5px;
-    font-size: 8.5px;
+  .fv-legend-foot { margin-top: 5px; font-size: 9px; }
+
+  /* Status pill moves to the top: the bottom is the drawer now. */
+  .fv-status {
+    top: calc(var(--fv-space-2) + var(--fv-safe-t) + 44px);
+    bottom: auto;
   }
 
-  .fv-toolbar { flex: 1 1 auto; }
+  .fv-modal-card { width: min(420px, 92vw); }
+}
+
+/* Touch sizing. Keyed on the pointer as well as the width, because a phone in
+   landscape is 844 CSS px wide — wide enough to miss a width-only breakpoint
+   while still being a thumb on glass. Measured before this second condition
+   existed: the Δ slider fell back to its 18px desktop track on a rotated
+   phone, inside a drawer whose every other control was 44px. */
+@media (max-width: 820px), (pointer: coarse) and (max-width: 860px) {
+  :root {
+    --fv-tap: 44px;                 /* touch targets                         */
+    --fv-gap: var(--fv-space-2);
+  }
+
+  .fv-btn,
+  .fv-ui .fv-btn {
+    min-height: var(--fv-tap);
+    padding: 0 var(--fv-space-4);
+    font-size: 12px;
+  }
+
+  .fv-query-close {
+    width: var(--fv-tap);
+    height: var(--fv-tap);
+    font-size: 18px;
+  }
+
+  .fv-about > summary { min-height: var(--fv-tap); }
+
+  .fv-range { height: var(--fv-tap); }
+  .fv-range::-webkit-slider-thumb { width: 22px; height: 22px; margin-top: -9px; }
+  .fv-range::-moz-range-thumb { width: 20px; height: 20px; }
+  .fv-range::-webkit-slider-runnable-track { height: 5px; }
+  .fv-range::-moz-range-track,
+  .fv-range::-moz-range-progress { height: 5px; }
+
+  .fv-row { padding: 4px 0; }
+
+  /* Folder titles are the collapse targets, so they carry the minimum. It has
+     to be declared on `.title` — on the container it is shadowed by lil-gui's
+     own `.lil-gui .title { --title-height: calc(...) }`. */
+  .lil-gui .title,
+  .fv-gui-host .lil-gui .title { --title-height: var(--fv-tap); }
+
+  .fv-gui .lil-gui,
+  .fv-gui-host .lil-gui,
+  .fv-ui .fv-gui-host .lil-gui {
+    --widget-height: 28px;
+    --font-size: 12px;
+    --input-font-size: 12px;
+    --padding: 8px;
+    --spacing: 7px;
+    --name-width: 55%;
+  }
+
   .fv-overlay-card { width: min(340px, 84vw); }
 }
 
-/* Very short viewports (landscape phones): drop the legend footnote and the
-   about-expander body so the essential readouts still fit. */
-@media (max-height: 480px) and (max-width: 900px) {
+/* Very short viewports (landscape phones). 44px targets plus the tab row plus
+   the scrubber already spend ~110 of 390px before a panel opens, so the ceiling
+   here is an absolute px cap rather than a vh fraction — 45vh of a 390px screen
+   is 176px of panel over 110px of fixed chrome, i.e. three quarters of the
+   screen gone. The copy that is nice-to-have rather than load-bearing also
+   steps aside. */
+@media (max-height: 480px) and (max-width: 860px) {
+  /* 860, not 900. Every rule in here assumes the DRAWER layout, and the drawer
+     starts at 860 — at 861-900px wide the desktop four-corner layout is still
+     active, and clamping the corner zones to 150px there clipped the info card
+     and the stats column and let the legend spill out of its corner. */
+  .fv-zone--tl,
+  .fv-zone--tr,
+  .fv-zone--bl,
+  .fv-zone--br {
+    max-height: min(40vh, 150px);
+    padding: var(--fv-space-2) var(--fv-space-4) var(--fv-space-1);
+  }
+
   .fv-legend-foot { display: none; }
   .fv-title h2 { display: none; }
-  .fv-sheet--open .fv-gui,
-  .fv-sheet--open .fv-gui-host { max-height: 42vh; }
+  .fv-scrub-axis { display: none; }
+  .fv-scrub { padding: var(--fv-space-1) var(--fv-space-3); }
 }
 
 /* Fine-pointer devices never need the 44px minimum, even on a small window.
-   Everything the 820px block sized with a *literal* 44 has to be undone here
-   by hand; only the things driven by --fv-tap follow the token automatically. */
+   Everything above is now driven by --fv-tap, so lowering the token does most of
+   the work; only the slider thumb carries literal px and has to be restated. */
 @media (pointer: fine) and (max-width: 820px) {
   :root { --fv-tap: 32px; }
-  .fv-btn,
-  .fv-ui .fv-btn { min-height: 32px; }
-  .fv-toolbar .fv-btn,
-  .fv-ui .fv-toolbar .fv-btn { min-height: 28px; padding: 0 11px; font-size: 10.5px; }
-  .fv-query-close { width: 32px; height: 32px; font-size: 15px; }
-  .fv-about > summary { min-height: 32px; }
-  .lil-gui .title,
-  .fv-gui-host .lil-gui .title { --title-height: 32px; }
-  .fv-range { height: 22px; }
-  /* Thumb margin-top is always (trackHeight - thumbHeight) / 2 — webkit lays
-     the runnable track out from the top, so the thumb has to be pulled up by
-     half the difference to sit centred on it. */
   .fv-range::-webkit-slider-thumb { width: 15px; height: 15px; margin-top: -5px; }
   .fv-range::-moz-range-thumb { width: 13px; height: 13px; }
+  .fv-tab { font-size: 10.5px; }
 }
 
 /* ============================================================================

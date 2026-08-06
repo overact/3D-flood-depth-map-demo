@@ -52,7 +52,7 @@ const BLUES = [
 /** Contract §5 defaults — filled in for any key `main.js` left undefined. */
 const STATE_DEFAULTS = {
   waterOffset: 0,
-  vertExag: 5,
+  vertExag: 14,
   sunAzimuth: 135,
   sunElevation: 32,
   waveAmp: 1,
@@ -125,6 +125,40 @@ function attrs(node, map) {
     else node.setAttribute(k, v === true ? '' : String(v));
   }
   return node;
+}
+
+/** Inline SVG icon. `d` is one or more path commands; 24x24 viewBox, stroked. */
+function icon(...d) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', '17');
+  svg.setAttribute('height', '17');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '1.7');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const spec of d) {
+    const p = document.createElementNS(NS, 'path');
+    p.setAttribute('d', spec);
+    svg.appendChild(p);
+  }
+  return svg;
+}
+
+const ICON_EYE = ['M2.2 12S6 5.5 12 5.5 21.8 12 21.8 12 18 18.5 12 18.5 2.2 12 2.2 12Z', 'M12 9.4a2.6 2.6 0 1 0 0 5.2 2.6 2.6 0 0 0 0-5.2Z'];
+const ICON_EYE_OFF = ['M3 3l18 18', 'M10.6 6.1A9.9 9.9 0 0 1 12 6c6 0 9.8 6 9.8 6a18 18 0 0 1-3.3 3.9', 'M6.4 8.2A18 18 0 0 0 2.2 12S6 18 12 18a9.6 9.6 0 0 0 3.5-.65'];
+
+/**
+ * The narrow-viewport chrome is a bottom drawer, and everything about it —
+ * which cards are reachable, whether the drawer is open — has to agree with
+ * the CSS breakpoint in style.css. One source of truth, matched here.
+ */
+const MOBILE_QUERY = '(max-width: 860px)';
+function isNarrow() {
+  return typeof matchMedia === 'function' && matchMedia(MOBILE_QUERY).matches;
 }
 
 /* ------------------------------------------------------------------ *
@@ -550,48 +584,81 @@ canvas.fv-canvas{ display:block; position:fixed; left:0; top:0; }
   .fv-zone--bl{ bottom:106px; }
 }
 
+/* ---- narrow-viewport chrome (drawer trigger surfaces) ------
+   Hidden on desktop; the 860px block below turns them on. This file is the
+   BASELINE sheet: style.css restyles all of it, but the contract is that the
+   viewer still works if style.css is absent, so the drawer's own controls need
+   enough here to be legible and hittable on their own. */
+.fv-cap, .fv-mobtools, .fv-tabs{ display:none; }
+.fv-tab{
+  flex:1 1 0; min-width:0; min-height:40px; padding:0 2px;
+  border:0; border-top:2px solid transparent; background:transparent;
+  color:var(--fv-ink-soft); font-size:11px; font-weight:600; cursor:pointer;
+}
+.fv-tab-label{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.fv-tab--on{ color:var(--fv-accent); border-top-color:var(--fv-accent); }
+.fv-icon-btn{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:34px; height:34px; padding:0; cursor:pointer;
+  border:1px solid var(--fv-line); border-radius:99px;
+  background:var(--fv-panel); color:var(--fv-ink-soft);
+}
+.fv-icon-btn[aria-pressed="true"]{ color:var(--fv-accent); }
+.fv-cap-dot{ flex:0 0 7px; width:7px; height:7px; border-radius:50%; background:var(--fv-accent); }
+.fv-cap-text{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* Hide-interface mode is NOT breakpoint-scoped: wanting the scene without the
+   chrome is not a small-screen need. Mirrors style.css section 3. */
+.fv-ui--hidden > *:not(.fv-mobtools){ visibility:hidden; pointer-events:none; }
+
 /* ============================================================
-   Narrow viewport: the GUI becomes a bottom sheet, the legend
-   shrinks, and every card stacks in one column.
+   Narrow viewport: every card becomes a tab in ONE bottom
+   drawer, so the canvas keeps the screen. See js/ui.js.
    ============================================================ */
 @media (max-width: 860px){
-  .fv-ui{ display:flex; flex-direction:column; padding:8px 8px calc(var(--fv-sheet-h) + 8px); gap:8px; }
-  .fv-zone{ position:static; width:auto; max-height:none; flex:0 0 auto; }
-  .fv-zone--tl{ order:0; overflow:visible; }
-  .fv-zone--tr{ order:1; flex-direction:row; justify-content:flex-end; align-items:flex-start; }
-  .fv-zone--br{ order:2; margin-top:auto; align-items:flex-end; }
-  .fv-zone--bl{ order:3; width:auto; }
-  .fv-zone--bc{ order:4; width:auto; min-width:0; max-width:none; transform:none; }
-  .fv-status{ bottom:calc(var(--fv-sheet-h) + 92px); }
+  .fv-ui{
+    display:flex; flex-direction:column; justify-content:flex-end;
+    padding:0; gap:0;
+  }
+  .fv-zone{ position:static; width:auto; max-height:none; flex:0 1 auto; transform:none; }
 
-  .fv-title h1{ font-size:15px; }
-  .fv-legend{ width:104px; padding:6px 8px 7px; }
-  .fv-legend-scale{ height:104px; }
-  .fv-legend-tick{ font-size:8.5px; }
-  /* The footnote is short enough to keep even here — contract §5 asks for the
-     "clipped above rampMax" note to be shown, not just on wide screens. */
-  .fv-legend-foot{ font-size:8.5px; }
+  /* the four tab panels — only the selected one is laid out at all */
+  .fv-zone--tl, .fv-zone--tr, .fv-zone--bl, .fv-zone--br{
+    order:1; display:none; min-width:0; align-items:stretch;
+    max-height:45vh; overflow-y:auto; overflow-x:hidden;
+    padding:8px 10px; gap:8px;
+  }
+  .fv-ui[data-tab="info"]     .fv-zone--tl,
+  .fv-ui[data-tab="controls"] .fv-zone--tr,
+  .fv-ui[data-tab="stats"]    .fv-zone--bl,
+  .fv-ui[data-tab="legend"]   .fv-zone--br{ display:flex; }
 
-  /* the panel detaches from the flow and docks to the bottom edge */
-  .fv-sheet{
-    position:fixed; left:0; right:0; bottom:0; width:auto; z-index:2;
-    background:var(--fv-panel-strong); border-top:1px solid var(--fv-line);
-    box-shadow:0 -6px 22px rgba(10,25,45,.16);
+  .fv-tabs{ order:2; display:flex; pointer-events:auto; }
+  .fv-zone--bc{ order:3; width:auto; min-width:0; max-width:none; }
+
+  /* Inside the drawer the cards are not separate objects any more: one glass
+     surface, so drop every card's own frame. */
+  .fv-ui .fv-panel{ background:none; border:0; box-shadow:none;
+    -webkit-backdrop-filter:none; backdrop-filter:none; }
+
+  .fv-cap, .fv-mobtools{ display:flex; position:absolute; pointer-events:auto; }
+  .fv-cap{
+    top:8px; left:8px; max-width:calc(100% - 128px);
+    align-items:center; gap:7px; min-height:34px; padding:0 10px;
+    border:1px solid var(--fv-line); border-radius:99px; background:var(--fv-panel);
+    font-size:11.5px; font-weight:620; color:var(--fv-ink); cursor:pointer;
   }
-  .fv-sheet-head{
-    display:flex; align-items:center; justify-content:space-between; gap:10px;
-    width:100%; height:var(--fv-sheet-h); padding:0 12px;
-    background:transparent; border:0; cursor:pointer; font-size:11.5px; font-weight:620;
-  }
-  .fv-sheet-head::after{
-    content:""; width:0; height:0; border-top:5px solid var(--fv-ink-faint);
-    border-left:4.5px solid transparent; border-right:4.5px solid transparent;
-    transition:transform .2s ease;
-  }
-  .fv-sheet-head[aria-expanded="true"]::after{ transform:rotate(180deg); }
-  .fv-gui-host{ max-height:0; overflow:hidden; transition:max-height .24s ease; }
-  .fv-sheet--open .fv-gui-host{ max-height:56vh; overflow-y:auto; }
-  .fv-gui-host .lil-gui{ border:0; border-top:1px solid var(--fv-line-soft); border-radius:0; box-shadow:none; }
+  .fv-mobtools{ top:8px; right:8px; gap:6px; }
+  .fv-tabs{ border-top:1px solid var(--fv-line-soft); background:var(--fv-panel-strong); }
+  .fv-zone--bc{ pointer-events:auto; background:var(--fv-panel-strong); }
+
+  .fv-toolbar{ display:none; }            /* replaced by .fv-mobtools */
+  .fv-sheet-head{ display:none; }         /* replaced by the Controls tab */
+  .fv-sheet{ width:100%; }
+  .fv-gui-host{ max-height:none; overflow:visible; }
+  .fv-gui-host .lil-gui{ border:0; border-radius:0; box-shadow:none; width:100%; }
+
+  .fv-legend{ width:auto; }
+  .fv-status{ bottom:auto; top:56px; }
 }
 
 @media (prefers-reduced-motion: reduce){
@@ -1062,6 +1129,7 @@ export function createUI(opts = {}) {
     ['S', 'Screenshot'],
     ['W', 'Show water on / off'],
     ['D', 'Science colouring (Blues ramp)'],
+    ['U', 'Hide / show the interface'],
     ['H', 'This help'],
     ['Esc', 'Close']
   ];
@@ -1075,28 +1143,146 @@ export function createUI(opts = {}) {
   add(keysTable, tbody);
   add(modalCard, keysTable);
   add(modalCard, h('div', 'fv-modal-foot',
-    'Mouse: drag to orbit, scroll to zoom, click the surface to query the depth there.'));
+    'Mouse: drag to orbit, scroll to zoom, click the surface to query the depth there. '
+    + 'Touch: drag to orbit, two fingers to zoom and pan, tap the surface to query it.'));
   add(modal, backdrop, modalCard);
   add(root, modal);
 
   let lastFocus = null;
   function setHelp(open) {
+    // Both triggers, not just the desktop one: `helpBtn2` in .fv-mobtools is the only help
+    // control that exists below 860px, so leaving it out meant the sole visible trigger on a
+    // phone never announced the dialog's state to a screen reader.
     if (open) {
       lastFocus = document.activeElement;
       modal.removeAttribute('hidden');
-      helpBtn.setAttribute('aria-expanded', 'true');
+      setHelpExpanded(true);
       modalClose.focus();
     } else {
       modal.setAttribute('hidden', '');
-      helpBtn.setAttribute('aria-expanded', 'false');
+      setHelpExpanded(false);
       if (lastFocus && typeof lastFocus.focus === 'function') lastFocus.focus();
       lastFocus = null;
     }
+  }
+  // Every control that opens the dialog registers here. A `typeof helpBtn2 !== 'undefined'`
+  // guard would NOT have been safe: helpBtn2 is a `const` declared further down, and `typeof`
+  // on a let/const in its temporal dead zone throws a ReferenceError rather than returning
+  // "undefined". A list that starts with the one trigger that already exists has no such edge.
+  const helpTriggers = [helpBtn];
+  function setHelpExpanded(v) {
+    for (const t of helpTriggers) t.setAttribute('aria-expanded', v ? 'true' : 'false');
   }
   const helpOpen = () => !modal.hasAttribute('hidden');
   helpBtn.addEventListener('click', () => setHelp(!helpOpen()));
   modalClose.addEventListener('click', () => setHelp(false));
   backdrop.addEventListener('click', () => setHelp(false));
+
+  /* ---------------- narrow-viewport drawer ----------------
+   *
+   * On a phone the old layout turned `.fv-ui` into a scrolling column of every
+   * card at once. Measured on a 390x844 viewport that covered 83.6 % of the
+   * screen — the 3D scene, which is the entire point of the page, was reduced
+   * to a few gutters. So below 860px (MOBILE_QUERY above) the same cards become
+   * the body of ONE bottom drawer, four tabs deep, and the canvas gets the rest.
+   *
+   * No card moves in the DOM. Each zone already holds exactly the group that
+   * wants its own tab, so the tab state is a single `data-tab` attribute on the
+   * root and the CSS shows the matching zone. That keeps the desktop layout —
+   * which is carefully tuned and was not asked to change — completely untouched:
+   * every rule involved lives inside the `max-width: 860px` block.
+   *
+   *   data-tab="none"     collapsed: tab bar + Δ scrubber only (~17 % of screen)
+   *   data-tab="info"     .fv-zone--tl   title, sources, about
+   *   data-tab="stats"    .fv-zone--bl   query result + flood statistics
+   *   data-tab="legend"   .fv-zone--br   depth ramp
+   *   data-tab="controls" .fv-zone--tr   lil-gui
+   */
+
+  const TABS = [
+    { id: 'info', label: 'Info', zone: zoneTL },
+    { id: 'stats', label: 'Stats', zone: zoneBL },
+    { id: 'legend', label: 'Legend', zone: zoneBR },
+    { id: 'controls', label: 'Controls', zone: zoneTR },
+  ];
+
+  // Title capsule, top-left. The full title card costs 224px of a 844px screen;
+  // on a phone it becomes a one-line pill that opens the Info tab instead.
+  const cap = h('button', 'fv-cap');
+  attrs(cap, { type: 'button', 'aria-controls': 'fv-panel-info', 'aria-expanded': 'false' });
+  add(cap, h('span', 'fv-cap-dot'), h('span', 'fv-cap-text', 'Kempsey 3D Flood Viewer'));
+  add(root, cap);
+
+  // Top-right icon buttons. These are additional TRIGGERS, not copies: the help
+  // one calls the same setHelp() as the desktop toolbar button, so there is only
+  // ever one dialog and one piece of state behind it.
+  const mobTools = h('div', 'fv-mobtools');
+  const hideBtn = h('button', 'fv-icon-btn');
+  attrs(hideBtn, { type: 'button', 'aria-pressed': 'false', 'aria-label': 'Hide interface' });
+  add(hideBtn, icon(...ICON_EYE));
+  const helpBtn2 = h('button', 'fv-icon-btn');
+  attrs(helpBtn2, { type: 'button', 'aria-haspopup': 'dialog', 'aria-label': 'Help and shortcuts' });
+  add(helpBtn2, icon('M12 17.2v.01', 'M9.4 9.1a2.7 2.7 0 1 1 3.5 2.6c-.6.2-.9.7-.9 1.3v.6'));
+  helpTriggers.push(helpBtn2);
+  add(mobTools, helpBtn2, hideBtn);
+  add(root, mobTools);
+
+  // The tab bar itself.
+  const tabBar = h('div', 'fv-tabs');
+  attrs(tabBar, { role: 'tablist', id: 'fv-drawer' });
+  const tabBtns = new Map();
+  for (const t of TABS) {
+    const b = h('button', 'fv-tab');
+    attrs(b, {
+      type: 'button', role: 'tab', 'aria-selected': 'false', 'data-tab': t.id,
+      id: 'fv-tab-' + t.id, 'aria-controls': 'fv-panel-' + t.id
+    });
+    add(b, h('span', 'fv-tab-label', t.label));
+    // Tapping the open tab closes the drawer — the same affordance as the
+    // chevron, but on the control the thumb is already over.
+    b.addEventListener('click', () => setTab(currentTab === t.id ? 'none' : t.id));
+    add(tabBar, b);
+    tabBtns.set(t.id, b);
+    attrs(t.zone, { role: 'tabpanel', id: 'fv-panel-' + t.id, 'aria-labelledby': 'fv-tab-' + t.id });
+  }
+  add(root, tabBar);
+
+  let currentTab = 'none';
+
+  function setTab(id) {
+    currentTab = id;
+    root.setAttribute('data-tab', id);
+    for (const [tid, b] of tabBtns) {
+      const on = tid === id;
+      b.classList.toggle('fv-tab--on', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    }
+    cap.setAttribute('aria-expanded', id === 'info' ? 'true' : 'false');
+    // A tab panel that just became visible starts scrolled wherever it was left.
+    const t = TABS.find((x) => x.id === id);
+    if (t) t.zone.scrollTop = 0;
+  }
+
+  setTab('none');
+  cap.addEventListener('click', () => setTab(currentTab === 'info' ? 'none' : 'info'));
+  helpBtn2.addEventListener('click', () => setHelp(!helpOpen()));
+
+  // Hide-interface toggle. Collapses the drawer first so re-showing the UI never
+  // brings back a panel the user cannot see the canvas behind.
+  let uiHidden = false;
+  function setUiHidden(v) {
+    uiHidden = !!v;
+    root.classList.toggle('fv-ui--hidden', uiHidden);
+    hideBtn.setAttribute('aria-pressed', uiHidden ? 'true' : 'false');
+    hideBtn.setAttribute('aria-label', uiHidden ? 'Show interface' : 'Hide interface');
+    hideBtn.textContent = '';
+    add(hideBtn, icon(...(uiHidden ? ICON_EYE_OFF : ICON_EYE)));
+    // Collapse the drawer AND dismiss the dialog. Without the second one, `H` while hidden
+    // opened a visibility:hidden modal and moved focus into it — a focus trap with nothing
+    // visible on screen.
+    if (uiHidden) { setTab('none'); if (helpOpen()) setHelp(false); }
+  }
+  hideBtn.addEventListener('click', () => setUiHidden(!uiHidden));
 
   /* ---------------- mount ---------------- */
 
@@ -1143,7 +1329,9 @@ export function createUI(opts = {}) {
   const fLight = gui.addFolder('Light & terrain');
   bind(fLight, 'sunAzimuth', 'Sun azimuth (°)', 0, 360, 1);
   bind(fLight, 'sunElevation', 'Sun elevation (°)', 1, 88, 1);
-  bind(fLight, 'vertExag', 'Vertical exaggeration (×)', 1, 20, 0.5);
+  // Default is 14x, so the old 20x ceiling left barely a third of the slider above the
+  // starting point. 30 keeps the default near the middle where it can be pushed both ways.
+  bind(fLight, 'vertExag', 'Vertical exaggeration (×)', 1, 30, 0.5);
 
   // --- water material -------------------------------------------------
   const fWater = gui.addFolder('Water material');
@@ -1359,6 +1547,12 @@ export function createUI(opts = {}) {
     if (q.observed) tagObs.removeAttribute('hidden'); else tagObs.setAttribute('hidden', '');
 
     queryCard.removeAttribute('hidden');
+
+    // On a phone the query card lives inside the drawer's Stats tab, so a tap on
+    // the map has to bring that tab up — otherwise the reading the user just
+    // asked for is written into a panel they cannot see. Never force the drawer
+    // open while the interface is deliberately hidden.
+    if (isNarrow() && !uiHidden && currentTab !== 'stats') setTab('stats');
   }
 
   qClose.addEventListener('click', () => setQuery(null));
@@ -1486,6 +1680,7 @@ export function createUI(opts = {}) {
 
     if (k === 'Escape') {
       if (helpOpen()) { setHelp(false); e.preventDefault(); }
+      else if (currentTab !== 'none') { setTab('none'); e.preventDefault(); }
       else if (!queryCard.hasAttribute('hidden')) { setQuery(null); e.preventDefault(); }
       return;
     }
@@ -1499,6 +1694,7 @@ export function createUI(opts = {}) {
       case 'w': toggle('showWater'); e.preventDefault(); break;
       case 'd': toggle('science'); e.preventDefault(); break;
       case 'h': case '?': setHelp(!helpOpen()); e.preventDefault(); break;
+      case 'u': setUiHidden(!uiHidden); e.preventDefault(); break;
       default: break;
     }
   }
@@ -1524,5 +1720,9 @@ export function createUI(opts = {}) {
 
   // Contract §5 requires setStats / setQuery / setStatus / gui / state.
   // setMeta / refresh / dispose / root are additive conveniences for main.js.
-  return { setStats, setQuery, setStatus, gui, state, setMeta: applyMeta, refresh, dispose, root };
+  // setTab / setUiHidden drive the narrow-viewport drawer (see above).
+  return {
+    setStats, setQuery, setStatus, gui, state, setMeta: applyMeta, refresh, dispose, root,
+    setTab, setUiHidden, get tab() { return currentTab; },
+  };
 }

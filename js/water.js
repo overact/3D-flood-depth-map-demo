@@ -238,6 +238,7 @@ uniform float uEnvIntensity;
 uniform float uHazeDensity;
 uniform float uHoverStrength; // 0 = off, eases in/out as the pointer enters/leaves water
 uniform sampler2D tHoverMask; // 1 inside the connected body under the pointer, 0 elsewhere
+uniform vec2  uMaskTexel;     // 1/nx, 1/ny of tHoverMask - for the body-outline taps
 uniform float uSaturation;
 uniform float uContrast;
 uniform float uLift;
@@ -467,7 +468,29 @@ void main() {
   // lets the sheet climb over near-field banks.  12 LSB + a 25 cm floor.
   float lsb = waterVZ * waterVZ * (uCameraFar - uCameraNear)
             / (max(uCameraNear * uCameraFar, 1.0) * 16777216.0);
-  float tol = max(0.25, 12.0 * lsb);
+  // ...and a second, larger slack for TESSELLATION, which is not a precision problem at all.
+  // The water sheet is a coarse regular grid whose height is linearly interpolated between
+  // vertices; the terrain it is tested against is a separate, FINER mesh off the 1536x1426
+  // DEM (43.8 m vs 25.5 m pitch at high, 87.6 vs 76.6 at low — finer at all three tiers).
+  // Over rough ground the flat water quad cuts under the terrain's own interpolation, the
+  // fragment is discarded, and the flood comes out perforated; the swell then moves the
+  // sheet every frame so the holes crawl. Measured before this term existed: 6.2% of the
+  // water body was being punched out. After: 0.08%.
+  //
+  // The bracket is an assumed vertical disagreement in TRUE metres (~0.25 m of relief across
+  // one water cell on a floodplain, plus up to 1.1 m of swell), which the exaggeration then
+  // scales into world units along with everything else. So at the 14x default this is ~11 m
+  // of view-space slack — i.e. water may composite over terrain up to about 0.8 m of REAL
+  // elevation nearer the camera, not "a few centimetres". Measured cost of that at a grazing
+  // view from a 307 m ridge: +0.6-0.8% extra water, all of it below the horizon line, none
+  // punched through a ridge into the sky.
+  //
+  // It cannot invent water on dry ground in any case — the wet test above is per-fragment
+  // against this fragment's own need/flags texels, so only occlusion is at stake here, never
+  // membership. The cap keeps the 30x end of the exaggeration slider from turning 0.8 m of
+  // tolerated error into 2.9 m.
+  float geo = min(uVertExag * (0.25 + 0.55 * clamp(uWaveAmp, 0.0, 2.0)), 18.0);
+  float tol = max(0.25, 12.0 * lsb) + geo;
   if (sceneVZ > waterVZ + tol) discard;                // terrain is in front of the water
 
   /* --- 3. procedural ripple normal ------------------------------------------------ */
@@ -604,14 +627,36 @@ void main() {
    * a bright rim traced along the whole boundary is what makes the extent readable at a
    * glance, far more than tinting the interior would. The interior only gets a small lift,
    * which also keeps the two bodies separable where they meet at the coast.          */
-  float hl = uHoverStrength * texture2D(tHoverMask, vUv).r;
-  if (hl > 0.001) {
+  float hm = texture2D(tHoverMask, vUv).r;
+  float hl = uHoverStrength * hm;
+  // Gated on the OUTLINE as well as the interior. Gating on hl alone meant the block only
+  // ran where the centre texel was already inside the body, so the outer half of the mask's
+  // linear ramp never drew and the outline sat wholly inside the water rather than on it.
+  float he = 0.0;
+  if (uHoverStrength > 0.001) {
+    he = max(
+      abs(texture2D(tHoverMask, vUv + vec2(uMaskTexel.x, 0.0)).r
+        - texture2D(tHoverMask, vUv - vec2(uMaskTexel.x, 0.0)).r),
+      abs(texture2D(tHoverMask, vUv + vec2(0.0, uMaskTexel.y)).r
+        - texture2D(tHoverMask, vUv - vec2(0.0, uMaskTexel.y)).r));
+  }
+  if (hl > 0.001 || he > 0.004) {
     col = mix(col, col * 1.20 + vec3(0.008, 0.026, 0.044) * lit, hl);
-    // Wider than the static edge band so it reads as an outline rather than a thicker
-    // shoreline; squared so it hugs the waterline instead of washing inward.
-    float glowW = clamp(30.0 * dw, 0.12, 1.60);
-    float rimGlow = 1.0 - smoothstep(0.0, glowW, depth);
-    col += vec3(0.34, 0.68, 0.88) * lit * rimGlow * rimGlow * hl * 0.75;
+    // Outline the BODY, not the shoreline.
+    //
+    // This rim used to key off depth, as 1 - smoothstep(0, w, depth), on the assumption
+    // that shallow water only occurs at the body's edge. On a floodplain this flat that is
+    // badly wrong: the interior is littered with sub-metre patches where the column passes
+    // through zero, so the rim drew a bright ring around every one of them and the body read
+    // as a sheet full of holes.
+    //
+    // The mask itself is the correct source. It is 0 outside the hovered body and 255 inside,
+    // sampled with LinearFilter, so it only varies across the boundary — and nowhere in the
+    // interior, however shallow the water gets. Four explicit neighbour taps rather than
+    // fwidth(hm): this is downstream of three discards, and GLSL ES 3.0 s8.14 leaves
+    // derivatives undefined in a partly-retired quad — which is exactly the quad on every
+    // waterline. (The taps are hoisted above this branch so the outline can gate it.)
+    col += vec3(0.34, 0.68, 0.88) * lit * he * uHoverStrength * 1.15;
   }
 
   /* --- 7. fresnel + sky reflection ------------------------------------------------ */
@@ -694,7 +739,7 @@ void main() {
 /**
  * @param {object} opts
  * @param {object} opts.textures  { tTerrain, tNeed, tWsurf, tFlags }
- * @param {object} opts.grid      { EW, EH }
+ * @param {object} opts.grid      { EW, EH, nx, ny }  nx/ny size the hover-mask texel
  * @param {THREE.Texture} [opts.envMap]  PMREM output from the Sky (CubeUVReflectionMapping)
  * @returns {THREE.ShaderMaterial}
  */
@@ -756,6 +801,14 @@ export function createWaterMaterial(opts = {}) {
     uHazeDensity: { value: 0.0 }, // 0 = off; set it only if the terrain pass is fogged
     uHoverStrength: { value: 0.0 },
     tHoverMask: { value: null },
+    // One texel of tHoverMask, for the body-outline taps in section 6b. Defaults to the
+    // 1536x1426 data grid so the material is still correct if the caller omits nx/ny.
+    uMaskTexel: {
+      value: new THREE.Vector2(
+        1 / (Number.isFinite(grid.nx) ? grid.nx : 1536),
+        1 / (Number.isFinite(grid.ny) ? grid.ny : 1426)
+      )
+    },
     // Must mirror main.js's blit grade exactly, or terrain and water drift apart in tone.
     uSaturation: { value: 1.22 },
     uContrast: { value: 1.10 },
