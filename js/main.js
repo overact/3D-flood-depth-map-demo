@@ -52,6 +52,34 @@ function pickInitialQuality() {
   return 'high';
 }
 
+/**
+ * Render scale, and the viewer's ONLY antialiasing.
+ *
+ * `antialias: true` on the renderer buys nothing here and MSAA on `sceneRT` measurably makes
+ * things WORSE (shimmer 1465 -> 2581 px in the rotate test): the water pass does its own
+ * depth test against `sceneRT.depthTexture`, and a resolved multisample depth is not the
+ * exact per-pixel value that comparison needs. That is what the explicit `samples: 0` is
+ * protecting. The water's wet test is a hard `discard` too, which no MSAA mode antialiases.
+ * So supersampling is not a stylistic preference here, it is the only lever available.
+ *
+ * It used to be written `Math.min(window.devicePixelRatio, tierDpr)`, which silently meant
+ * NO antialiasing at all on an ordinary 1x monitor — the min is 1, the scene renders at
+ * native resolution, and every terrain silhouette and waterline crawls as the camera rotates.
+ * Asking for the tier's ratio outright supersamples on a 1x display (2x2 = 5.3x less shimmer
+ * measured) and still steps a 3x phone DOWN to 2x, which is what the cap was always for.
+ *
+ * The pixel budget is what keeps that honest on a big monitor: 2x on 2560x1440 would be a
+ * 236 MB render target, so the ratio is clipped to fit ~9 M drawing-buffer pixels. 1080p at
+ * 2x lands just inside it; 4K barely needs supersampling anyway and lands at ~1.
+ */
+const DRAW_BUFFER_BUDGET = 9e6;
+
+function effectivePixelRatio(tier) {
+  const want = QUALITY[tier].dpr;
+  const px = Math.max(1, window.innerWidth * window.innerHeight);
+  return Math.max(1, Math.min(want, Math.sqrt(DRAW_BUFFER_BUDGET / px)));
+}
+
 /* --------------------------------------------------------------------- quality tuner */
 
 const TUNE_WARMUP = 25;      // frames to ignore after a (re)build: shader compile, uploads
@@ -170,7 +198,7 @@ async function init() {
     preserveDrawingBuffer: true,      // needed for the screenshot button
     powerPreference: 'high-performance',
   });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY[state.quality].dpr));
+  renderer.setPixelRatio(effectivePixelRatio(state.quality));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -323,7 +351,7 @@ async function init() {
         state[k] = (raw === 'true') ? true : (raw === 'false') ? false : (isNaN(+raw) ? raw : +raw);
       }
     }
-    if (qs.has('quality')) { renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY[state.quality].dpr)); buildScene(); onResize(); }
+    if (qs.has('quality')) { renderer.setPixelRatio(effectivePixelRatio(state.quality)); buildScene(); onResize(); }
     if ([...qs.keys()].some((k) => k in state)) {
       syncUniforms(); updateSun(); updateStats(); ui.refresh && ui.refresh();
     }
@@ -511,6 +539,10 @@ function onResize() {
   const w = window.innerWidth, h = window.innerHeight;
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  // Recompute the ratio, do not reuse the old one: it is clipped against a pixel BUDGET, so
+  // dragging a window from a quarter of the screen to full screen would otherwise keep the
+  // supersampling factor chosen for the small size and quadruple the render target.
+  renderer.setPixelRatio(effectivePixelRatio(state.quality));
   renderer.setSize(w, h);
   const dpr = renderer.getPixelRatio();
   makeTargets(Math.max(2, Math.floor(w * dpr)), Math.max(2, Math.floor(h * dpr)));
@@ -687,7 +719,7 @@ function onChange(key, value) {
       // A hand-picked tier is final: if the user opened the panel and chose one, the tuner
       // must not quietly move it back. Only our own calls leave tuneApplying set.
       if (!tuneApplying) tuneAdjustments = TUNE_MAX_ADJUST;
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY[value].dpr));
+      renderer.setPixelRatio(effectivePixelRatio(value));
       buildScene(); onResize();
       tuneWarmup = 0; tuneSamples = []; tuneWindowStart = performance.now();
       break;
