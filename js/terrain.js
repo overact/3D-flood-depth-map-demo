@@ -52,16 +52,77 @@ export function buildTerrainGeometry(terrain, flags, grid, stride = 1) {
     }
   }
 
+  // ---- normals, straight off the heightfield -------------------------------------
+  //
+  // NOT computeVertexNormals(). That walks the index buffer, accumulates a face normal
+  // into three vertices per triangle and normalises at the end — it is general enough for
+  // any mesh, and at stride 1 (4.3 M triangles) it measured 1509-1861 ms of blocked main
+  // thread, i.e. 95 % of this whole function. On a phone CPU that is 3-7 seconds of frozen
+  // page before the first frame, which is the single reason high quality was unusable there.
+  //
+  // This surface is a regular heightfield, so the normal is analytic: for y = f(x, z),
+  // N is proportional to (-dy/dx, 1, -dy/dz). One central difference per vertex, no index
+  // walk, no accumulation pass. It is also SMOOTHER than the face-averaged result, because
+  // it is the true surface gradient rather than a mean of two arbitrary triangulations.
+  //
+  // Computed in object space, on the unexaggerated elevation: main.js scales the group by
+  // (1, vertExag, 1) and three applies the inverse-transpose normal matrix, so the shading
+  // follows the exaggeration on its own. Doing it here as well would double-count.
+  const nrm = new Float32Array(w * h * 3);
+  const dx = (stride * EW) / nx;          // world metres between adjacent samples
+  const dz = (stride * EH) / ny;
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      const k = j * w + i;
+      // Never difference across a hole or the border: fall back to a one-sided difference
+      // and shorten the span to match, otherwise the gradient is halved at every edge and
+      // the footprint boundary picks up a bevel that is not in the DEM.
+      let xl = i > 0 ? k - 1 : k;
+      let xr = i < w - 1 ? k + 1 : k;
+      if (!valid[xl]) xl = k;
+      if (!valid[xr]) xr = k;
+      const spanX = ((xl !== k ? 1 : 0) + (xr !== k ? 1 : 0)) * dx;
+      const dydx = spanX > 0 ? (pos[xr * 3 + 1] - pos[xl * 3 + 1]) / spanX : 0;
+
+      let zu = j > 0 ? k - w : k;
+      let zd = j < h - 1 ? k + w : k;
+      if (!valid[zu]) zu = k;
+      if (!valid[zd]) zd = k;
+      const spanZ = ((zu !== k ? 1 : 0) + (zd !== k ? 1 : 0)) * dz;
+      const dydz = spanZ > 0 ? (pos[zd * 3 + 1] - pos[zu * 3 + 1]) / spanZ : 0;
+
+      const inv = 1 / Math.hypot(dydx, 1, dydz);
+      nrm[k * 3] = -dydx * inv;
+      nrm[k * 3 + 1] = inv;
+      nrm[k * 3 + 2] = -dydz * inv;
+    }
+  }
+
   // ---- top surface index buffer -------------------------------------------------
-  const idx = [];
+  // Counted first, then filled straight into a Uint32Array. The previous version pushed
+  // into a plain `[]`, which for 4.3 M triangles is a 26 M-element JS array held live
+  // alongside the typed copy three makes from it — tens of MB of peak heap on a device
+  // that has just allocated 116 MB of geometry. Two cheap passes over the quad grid cost
+  // far less than that peak.
   const quadOk = new Uint8Array((w - 1) * (h - 1));
+  let quadCount = 0;
   for (let j = 0; j < h - 1; j++) {
     for (let i = 0; i < w - 1; i++) {
       const a = j * w + i, b = a + 1, c = a + w, d = c + 1;
       if (!(valid[a] && valid[b] && valid[c] && valid[d])) continue;
       quadOk[j * (w - 1) + i] = 1;
+      quadCount++;
+    }
+  }
+  const idx = new Uint32Array(quadCount * 6);
+  let ip = 0;
+  for (let j = 0; j < h - 1; j++) {
+    for (let i = 0; i < w - 1; i++) {
+      if (!quadOk[j * (w - 1) + i]) continue;
+      const a = j * w + i, b = a + 1, c = a + w, d = c + 1;
       // Winding: +X east, +Z south, +Y up → this order faces up.
-      idx.push(a, c, b, b, c, d);
+      idx[ip++] = a; idx[ip++] = c; idx[ip++] = b;
+      idx[ip++] = b; idx[ip++] = c; idx[ip++] = d;
     }
   }
 
@@ -96,8 +157,8 @@ export function buildTerrainGeometry(terrain, flags, grid, stride = 1) {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  geo.setIndex(idx);
-  geo.computeVertexNormals();
+  geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  geo.setIndex(new THREE.BufferAttribute(idx, 1));
   geo.computeBoundingSphere();
   geo.computeBoundingBox();
 

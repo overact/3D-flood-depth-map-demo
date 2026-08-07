@@ -27,17 +27,96 @@ const QUALITY = {
 // shader (the water pass draws straight to the canvas). They must not drift apart.
 const GRADE = { saturation: 1.22, contrast: 1.10, lift: -0.012 };
 
+const TIERS = ['low', 'medium', 'high'];
+
 /**
- * Terrain at stride 1 is 4.3 M triangles; that is fine on a discrete GPU and miserable on a
- * phone. Guess from what the platform will tell us, then let the frame timer correct it.
+ * Opening guess only — `autoTune()` below has the last word, from measured frames.
+ *
+ * The old rule was `pointer: coarse -> low`, which handed an iPad Pro and a five-year-old
+ * budget phone the same 857 k triangles. Touch now starts at MEDIUM (1.85 M triangles,
+ * dpr 1.5) and the tuner promotes or demotes within about two seconds of real rendering.
+ * Starting in the middle is deliberate: every tier change rebuilds the terrain mesh, and
+ * medium rebuilds in ~150 ms against high's ~620 ms, so guessing wrong here is cheap in
+ * the direction of medium and expensive in the direction of high.
  */
 function pickInitialQuality() {
   const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
   const small = Math.min(screen.width, screen.height) <= 820;
-  const cores = navigator.hardwareConcurrency || 4;
-  if (coarse || small) return 'low';
-  if (cores <= 4) return 'medium';
+  // Touch never starts at the bottom any more. Gating that on hardwareConcurrency was
+  // tried and removed: iOS Safari under-reports it (this container reports 2), so the
+  // check fired on hardware that was perfectly capable and put it right back on low —
+  // reintroducing the exact problem it was meant to avoid. The frame timer knows what the
+  // core count only guesses at, so let it be the one to demote.
+  if (coarse || small) return 'medium';
+  if ((navigator.hardwareConcurrency || 4) <= 4) return 'medium';
   return 'high';
+}
+
+/* --------------------------------------------------------------------- quality tuner */
+
+const TUNE_WARMUP = 25;      // frames to ignore after a (re)build: shader compile, uploads
+const TUNE_WINDOW = 70;      // frames per decision when the device is keeping up
+const TUNE_MIN_SAMPLES = 12; // ...but never judge on fewer than this
+const TUNE_DEADLINE_MS = 2500;
+const TUNE_MAX_ADJUST = 2;   // then stop, so the viewer can never oscillate forever
+let tuneSamples = [];
+let tuneWarmup = 0;
+let tuneWindowStart = 0;
+let tuneAdjustments = 0;
+let tuneDemoted = false;     // once we have stepped DOWN, never step back up
+let tuneApplying = false;    // distinguishes our own onChange from the user's
+
+/**
+ * Measure, then move — in both directions.
+ *
+ * The previous version only ever stepped down, only once, and only from the tier the
+ * opening guess happened to pick. That is what forced the guess to be pessimistic: a wrong
+ * guess upward was permanent. Measuring both ways means the guess can start optimistic and
+ * a phone that genuinely renders this at 60 fps ends up on high without anyone hard-coding
+ * that it may.
+ *
+ * Promotion needs the median AND the 90th percentile to be fast, not just the median: a
+ * device that hits vsync most frames but stutters every tenth one is exactly the device
+ * that would then fail at the next tier up and have to pay two rebuilds to get back.
+ */
+function autoTune(dt) {
+  if (tuneAdjustments >= TUNE_MAX_ADJUST) return;
+  if (tuneWarmup < TUNE_WARMUP) { tuneWarmup++; tuneWindowStart = performance.now(); return; }
+  tuneSamples.push(dt);
+  // A frame COUNT alone is the wrong deadline: 70 frames is 1.2 s on a device that is fine
+  // and 14 s on one rendering at 5 fps — i.e. the worse the device, the longer it waits to
+  // be rescued. Whichever comes first, so the struggling case is the fast one.
+  const enough = tuneSamples.length >= TUNE_WINDOW
+    || (tuneSamples.length >= TUNE_MIN_SAMPLES
+        && performance.now() - tuneWindowStart >= TUNE_DEADLINE_MS);
+  if (!enough) return;
+
+  const s = tuneSamples.slice().sort((a, b) => a - b);
+  const med = s[s.length >> 1];
+  const p90 = s[Math.floor(s.length * 0.9)];
+  tuneSamples = [];
+  tuneWarmup = 0;
+  tuneWindowStart = performance.now();
+
+  const i = TIERS.indexOf(state.quality);
+  if (med > 1 / 28 && i > 0) {
+    tuneDemoted = true;
+    tuneAdjustments++;
+    applyTunedQuality(TIERS[i - 1], 'Frame rate low — render quality reduced to');
+  } else if (!tuneDemoted && i < TIERS.length - 1 && med < 1 / 58 && p90 < 1 / 45) {
+    tuneAdjustments++;
+    applyTunedQuality(TIERS[i + 1], 'Rendering comfortably — quality raised to');
+  } else {
+    tuneAdjustments = TUNE_MAX_ADJUST;      // already where it belongs
+  }
+}
+
+function applyTunedQuality(tier, label) {
+  tuneApplying = true;
+  onChange('quality', tier);
+  tuneApplying = false;
+  if (ui.refresh) ui.refresh();
+  ui.setStatus({ text: `${label} "${tier}"`, timeout: 4500 });
 }
 
 /**
@@ -70,7 +149,6 @@ let sceneRT, blitScene, blitCam, blitMat;
 let sky, sun = new THREE.Vector3(), sunLight, hemiLight, envCubeRT, envCubeCam, envScene;
 let terrainGroup, terrainMesh, sideMesh, waterMesh, waterMat;
 let lastT = 0, elapsed = 0, statsTimer = 0, needStats = true, statsQuery = null;
-let frameAcc = 0, frameCount = 0, autoTuned = false;
 let tour = null;
 let pointerStart = null;
 let hoverNdc = null, hoverActive = false;
@@ -225,6 +303,10 @@ async function init() {
     pickSurface: (x, y) => pickSurface(new THREE.Vector2(x, y)),
     solveHoverBody: (i) => solveHoverBody(i),
     get hoverCells() { return hoverCells; },
+    get tuner() {
+      return { warmup: tuneWarmup, samples: tuneSamples.length, adjustments: tuneAdjustments,
+               demoted: tuneDemoted, tier: state.quality };
+    },
     renderOnce: () => render(),
     get uniforms() { return waterMat ? waterMat.uniforms : null; },
     get hover() { return { strength: hoverStrength, cells: hoverCells, active: hoverActive }; },
@@ -436,7 +518,11 @@ function onResize() {
 
 function animate() {
   const now = performance.now() / 1000;
-  const dt = Math.min(now - lastT, 0.05);
+  // Two different numbers on purpose. `dt` is clamped so a long stall cannot teleport the
+  // animation; `raw` is the real frame interval, which is what the quality tuner has to
+  // see — through the clamp every device slower than 20 fps looks identical.
+  const raw = now - lastT;
+  const dt = Math.min(raw, 0.05);
   lastT = now;
   elapsed += dt;
   const t = elapsed;
@@ -448,22 +534,7 @@ function animate() {
   }
   if (waterMat) waterMat.uniforms.uTime.value = t;
   updateHover(dt);
-  if (!autoTuned && frameCount < 120) {
-    // Ignore the first 20 frames: shader compiles and texture uploads land there.
-    if (frameCount++ > 20) frameAcc += dt;
-    if (frameCount === 120) {
-      const avg = frameAcc / 99;
-      const next = state.quality === 'high' ? 'medium' : state.quality === 'medium' ? 'low' : null;
-      if (avg > 1 / 28 && next) {
-        autoTuned = true;
-        onChange('quality', next);
-        if (ui.refresh) ui.refresh();
-        ui.setStatus({ text: `Low frame rate — render quality reduced to "${next}"`, timeout: 5000 });
-      } else {
-        autoTuned = true;
-      }
-    }
-  }
+  autoTune(raw);
   if (needStats) {
     statsTimer += dt;
     if (statsTimer > 0.12) { needStats = false; statsTimer = 0; updateStats(); }
@@ -613,8 +684,13 @@ function onChange(key, value) {
   switch (key) {
     case 'sunAzimuth': case 'sunElevation': updateSun(); break;
     case 'quality':
+      // A hand-picked tier is final: if the user opened the panel and chose one, the tuner
+      // must not quietly move it back. Only our own calls leave tuneApplying set.
+      if (!tuneApplying) tuneAdjustments = TUNE_MAX_ADJUST;
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY[value].dpr));
-      buildScene(); onResize(); break;
+      buildScene(); onResize();
+      tuneWarmup = 0; tuneSamples = []; tuneWindowStart = performance.now();
+      break;
     case 'waterOffset': needStats = true; hoverMaskOffset = NaN; syncUniforms(); break;
     default: syncUniforms();
   }
