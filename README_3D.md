@@ -5,8 +5,8 @@ mesh with the flood-depth map *painted onto it as an image*. There was no water 
 pixels on a hillshade. This version renders the flood as an actual **water surface in 3D**,
 with the published HOTA depth field driving its geometry.
 
-The true-3D viewer is the default `index.html` entry point. The Qgis2threejs export is
-preserved as `legacy_qgis2threejs.html`; `3d.html` remains as a compatibility redirect.
+The true-3D viewer is the default `index.html` entry point; `3d.html` remains as a
+compatibility redirect.
 
 ---
 

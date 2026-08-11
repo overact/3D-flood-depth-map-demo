@@ -4,14 +4,11 @@
 
 **[Open the interactive true-3D flood depth map →](https://overact.github.io/3D-flood-depth-map-demo/)**
 
-**[Open the original 2.5D viewer →](https://overact.github.io/3D-flood-depth-map-demo/legacy_qgis2threejs.html)**
-
 An interactive 3D flood depth map of Kempsey, NSW, Australia — the 26 March 2021 Macleay
 River flood.
 
 The default viewer renders a separate water surface, supports water-level scenarios, and uses
-the published HOTA mask and statistics exactly at Δ = 0. The original Qgis2threejs 2.5D
-publication demo remains available as a stable legacy page.
+the published HOTA mask and statistics exactly at Δ = 0.
 
 **Method** — SegFormer + **HOTA** (Hierarchical Overlap-Tiling Aggregation) + a 3D depth
 refinement module.
