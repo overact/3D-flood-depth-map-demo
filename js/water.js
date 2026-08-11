@@ -126,11 +126,11 @@ const SWELL_GLSL = /* glsl */`
 const vec2 SWELL_DIR = vec2(-0.966, 0.259);      // onshore, ~15 deg off due west
 
 float swell(vec2 p, float t, float sea, out vec2 grad) {
-  // 18x offshore puts the shortest component at ~470 m. That is not decoration: the
-  // water mesh is 61 m per cell at medium quality, and a 310 m wave sampled five times
-  // per period comes out visibly faceted along the triangulation. 470 m gives eight.
-  float ls = mix(1.0, 18.0, sea);                // sea swell is ~18x longer
-  float turn = sea * 0.85;
+  // 12x offshore puts the shortest component at ~310 m. That is not decoration: the
+  // water mesh is 61 m per cell at medium quality, so the shortest offshore component still
+  // receives roughly five samples per period instead of collapsing onto the triangulation.
+  float ls = mix(1.0, 12.0, sea);
+  float turn = sea * 0.45;                       // retain directional variation offshore
   vec2 d1 = normalize(mix(vec2( 0.94,  0.34), SWELL_DIR, turn));
   vec2 d2 = normalize(mix(vec2(-0.42,  0.91), SWELL_DIR, turn));
   vec2 d3 = normalize(mix(vec2( 0.62, -0.78), SWELL_DIR, turn));
@@ -141,7 +141,7 @@ float swell(vec2 p, float t, float sea, out vec2 grad) {
   float x1 = k1 * (dot(p, d1) - sqrt(9.81 / k1) * t);
   float x2 = k2 * (dot(p, d2) - sqrt(9.81 / k2) * t);
   float x3 = k3 * (dot(p, d3) - sqrt(9.81 / k3) * t);
-  float a = mix(1.0, 14.0, sea);           // ~1.4 m of swell offshore, not 0.1 m of chop
+  float a = mix(1.0, 6.0, sea);            // restrained ~0.6 m offshore swell
   grad = a * (a1 * k1 * cos(x1) * d1 + a2 * k2 * cos(x2) * d2 + a3 * k3 * cos(x3) * d3);
   return a * (a1 * sin(x1) + a2 * sin(x2) + a3 * sin(x3));
 }
@@ -354,8 +354,8 @@ vec2 waveGrad(vec2 p, vec2 dir, float L, float A, float t, float px, float sea, 
 
 // 6 bands.  Flood: 2.2 / 4 / 6.5 / 14 / 22 / 45 m wavelengths in WORLD metres, peak slopes
 // ~0.02-0.03 each => a few degrees total, which is what 30 cm of water over a paddock
-// actually looks like.  The sea multiplies wavelengths by 8 and amplitudes by 12, giving
-// a 17-360 m swell with ~1.5x the slope.
+// actually looks like. The sea lengthens wavelengths and modestly raises their amplitude,
+// a broader offshore spectrum without the former high-contrast parallel stripe pattern.
 // Offshore the six directions are pulled toward a single onshore heading. A wind sea is
 // short-crested and can come from anywhere; a SWELL has travelled far enough that only a
 // narrow directional band survives, and that is what makes an ocean read as an ocean —
@@ -365,12 +365,12 @@ vec2 waveGrad(vec2 p, vec2 dir, float L, float A, float t, float px, float sea, 
 // chop on standing floodwater genuinely has no preferred direction.  SWELL_DIR itself comes
 // from SWELL_GLSL above, so the ripples and the long swell agree on which way the sea runs.
 vec2 swellward(vec2 dir, float sea) {
-  return normalize(mix(dir, SWELL_DIR, sea * 0.80) + vec2(1e-4, 0.0));
+  return normalize(mix(dir, SWELL_DIR, sea * 0.35) + vec2(1e-4, 0.0));
 }
 
 vec2 rippleGrad(vec2 p, float t, float px, float sea, float amp, out float lost) {
   lost = 0.0;
-  float ls = mix(1.0, 16.0, sea);        // ... and a correspondingly longer one
+  float ls = mix(1.0, 10.0, sea);
   // Six fixed-direction waves summed at equal strength interfere into a regular lattice —
   // it reads as woven cloth, not water. Real swell arrives in GROUPS, so modulate the
   // amplitude by a slow, drifting envelope (~1.3 km, well above every wavelength here).
@@ -378,7 +378,7 @@ vec2 rippleGrad(vec2 p, float t, float px, float sea, float amp, out float lost)
   float env = mix(1.0,
         0.40 + 0.85 * fbm2(p * 0.00075 + vec2(t * 0.0015, -t * 0.0011))
              + 0.35 * fbm2(p * 0.0031 + vec2(-t * 0.010, t * 0.008)), sea);
-  float as = mix(1.0, 40.0, sea) * amp * env;
+  float as = mix(1.0, 4.0, sea) * amp * env;
   vec2 g = vec2(0.0);
   g += waveGrad(p, swellward(vec2( 0.951,  0.309), sea),  2.2 * ls, 0.0080 * as, t, px, sea, lost);
   g += waveGrad(p, swellward(vec2(-0.588,  0.809), sea),  4.0 * ls, 0.0200 * as, t, px, sea, lost);
@@ -455,7 +455,9 @@ void main() {
   if (bitOf(fl, 4.0) > 0.5) discard;                  // outside the data footprint
   // Hydrological connectivity gates the flood; the ocean is wet by definition (its cells
   // may carry the "never floodable" sentinel in tNeed).
-  bool wet = (uWaterOffset >= need || isSea > 0.5) && depth > 0.0;
+  bool baseline = abs(uWaterOffset) < 0.0005;
+  bool publishedWet = bitOf(fl, 1.0) > 0.5;
+  bool wet = (isSea > 0.5 || (baseline ? publishedWet : uWaterOffset >= need)) && depth > 0.0;
   if (!wet) discard;
 
   /* --- 2. manual depth test against the terrain pass ------------------------------ */
@@ -479,7 +481,7 @@ void main() {
   //
   // The bracket is an assumed vertical disagreement in TRUE metres (~0.25 m of relief across
   // one water cell on a floodplain, plus up to 1.1 m of swell), which the exaggeration then
-  // scales into world units along with everything else. So at the 14x default this is ~11 m
+  // scales into world units along with everything else. At the 4x default this is ~3.2 m
   // of view-space slack — i.e. water may composite over terrain up to about 0.8 m of REAL
   // elevation nearer the camera, not "a few centimetres". Measured cost of that at a grazing
   // view from a 307 m ridge: +0.6-0.8% extra water, all of it below the horizon line, none

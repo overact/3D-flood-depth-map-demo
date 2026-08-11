@@ -6,9 +6,9 @@
  * from GPU displacement (`displacementmap_vertex` writes position only), and because we
  * want raycasting to hit the real surface for click-to-query.
  *
- * Cells outside the DEM footprint (flag bit 4) are dropped from the index buffer, and the
- * resulting boundary is extruded down to a base plane so the model reads as a solid relief
- * block instead of a torn sheet.
+ * Cells outside the DEM footprint (flag bit 4) are dropped from the index buffer. No wall is
+ * generated along that irregular NoData boundary: scaling such a wall with the terrain turns
+ * small footprint gaps into kilometre-high spikes at large vertical exaggerations.
  */
 
 import * as THREE from 'three';
@@ -31,7 +31,6 @@ export function buildTerrainGeometry(terrain, flags, grid, stride = 1) {
   const uv = new Float32Array(w * h * 2);
   const valid = new Uint8Array(w * h);
 
-  let minY = Infinity;
   for (let j = 0; j < h; j++) {
     const sz = Math.min(ny - 1, j * stride);
     for (let i = 0; i < w; i++) {
@@ -48,7 +47,6 @@ export function buildTerrainGeometry(terrain, flags, grid, stride = 1) {
       uv[k * 2] = u;
       uv[k * 2 + 1] = v;
       valid[k] = (flags[si] & FLAG_OUT) ? 0 : 1;
-      if (valid[k] && y < minY) minY = y;
     }
   }
 
@@ -126,34 +124,6 @@ export function buildTerrainGeometry(terrain, flags, grid, stride = 1) {
     }
   }
 
-  // ---- extruded sides at the footprint boundary ---------------------------------
-  const BASE_DROP = 220;                      // metres below the lowest valid ground
-  const baseY = minY - BASE_DROP;
-  const sideVerts = [];
-  const sideIdx = [];
-  const pushWall = (i0, j0, i1, j1) => {
-    const k0 = j0 * w + i0, k1 = j1 * w + i1;
-    const n = sideVerts.length / 3;
-    sideVerts.push(
-      pos[k0 * 3], pos[k0 * 3 + 1], pos[k0 * 3 + 2],
-      pos[k1 * 3], pos[k1 * 3 + 1], pos[k1 * 3 + 2],
-      pos[k0 * 3], baseY, pos[k0 * 3 + 2],
-      pos[k1 * 3], baseY, pos[k1 * 3 + 2],
-    );
-    sideIdx.push(n, n + 2, n + 1, n + 1, n + 2, n + 3);
-    sideIdx.push(n, n + 1, n + 2, n + 1, n + 3, n + 2);   // double sided, cheap
-  };
-  const qOk = (i, j) => (i >= 0 && j >= 0 && i < w - 1 && j < h - 1) && quadOk[j * (w - 1) + i];
-  for (let j = 0; j < h - 1; j++) {
-    for (let i = 0; i < w - 1; i++) {
-      if (!qOk(i, j)) continue;
-      if (!qOk(i, j - 1)) pushWall(i, j, i + 1, j);           // north edge
-      if (!qOk(i, j + 1)) pushWall(i, j + 1, i + 1, j + 1);   // south edge
-      if (!qOk(i - 1, j)) pushWall(i, j, i, j + 1);           // west edge
-      if (!qOk(i + 1, j)) pushWall(i + 1, j, i + 1, j + 1);   // east edge
-    }
-  }
-
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
@@ -162,16 +132,7 @@ export function buildTerrainGeometry(terrain, flags, grid, stride = 1) {
   geo.computeBoundingSphere();
   geo.computeBoundingBox();
 
-  let sideGeo = null;
-  if (sideVerts.length) {
-    sideGeo = new THREE.BufferGeometry();
-    sideGeo.setAttribute('position', new THREE.Float32BufferAttribute(sideVerts, 3));
-    sideGeo.setIndex(sideIdx);
-    sideGeo.computeVertexNormals();
-    sideGeo.computeBoundingSphere();
-  }
-
-  return { geo, sideGeo, baseY, triangles: idx.length / 3 };
+  return { geo, triangles: idx.length / 3 };
 }
 
 /**
@@ -203,16 +164,6 @@ export function createTerrainMaterial(tBasemap) {
     mat.userData.shader = shader;
   };
   return mat;
-}
-
-export function createSideMaterial() {
-  return new THREE.MeshStandardMaterial({
-    color: 0x4a4640,
-    roughness: 1.0,
-    metalness: 0.0,
-    side: THREE.DoubleSide,
-    flatShading: true,
-  });
 }
 
 export { FLAG_SEA, FLAG_OUT };

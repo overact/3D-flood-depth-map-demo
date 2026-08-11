@@ -1,0 +1,31 @@
+{
+  "$schema": "../schema/region.schema.json",
+  "schemaVersion": 1,
+  "id": "kempsey",
+  "title": "Kempsey HOTA Flood Map",
+  "crs": "EPSG:3857",
+  "bounds": [17004050.0, -3652286.616346029, 17043280.0, -3615872.4415413416],
+  "sourceResolution": {
+    "terrainMetres": 5.8431676,
+    "depthMetres": 5.8431676,
+    "imageryMetres": 10.0
+  },
+  "overview": {
+    "base": "../../data3d/",
+    "meta": "meta.json",
+    "resolutionMetres": 25.54
+  },
+  "lod": {
+    "tileSamples": 257,
+    "minLevel": 0,
+    "maxLevel": 5,
+    "levelZeroDecimation": 32,
+    "urlTemplate": "tiles/{z}/{x}/{y}",
+    "available": false
+  },
+  "attribution": {
+    "terrain": "Geoscience Australia 5 m LiDAR DEM (AHD)",
+    "imagery": "Copernicus Sentinel-2, 26 March 2021",
+    "depth": "HOTA final_depth.tif"
+  }
+}

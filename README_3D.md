@@ -5,8 +5,8 @@ mesh with the flood-depth map *painted onto it as an image*. There was no water 
 pixels on a hillshade. This version renders the flood as an actual **water surface in 3D**,
 with the published HOTA depth field driving its geometry.
 
-Live entry point: `index.html`. The original export is preserved as
-`legacy_qgis2threejs.html` (it still reads `data/index/scene.js`).
+The true-3D viewer is the default `index.html` entry point. The Qgis2threejs export is
+preserved as `legacy_qgis2threejs.html`; `3d.html` remains as a compatibility redirect.
 
 ---
 
@@ -23,6 +23,12 @@ Live entry point: `index.html`. The original export is preserved as
 | Depth source | inverted from the picture | `final_depth.tif` itself |
 | First load | 39 MB `scene.js` | **9.7 MB** total |
 | three.js | r1xx bundled build | r185, ESM, vendored |
+
+The interactive overview currently uses the 25.5 m display grid. The region manifest records
+the native 5.843 m terrain/depth resolution, and `tools/build_lod_tiles.py` builds shared-edge
+257 × 257 tiles whose highest level preserves every native sample. Lower levels decimate by
+powers of two so a runtime can stream 5.843 m data near the camera and coarser data in the
+distance without allocating the complete 55-million-vertex grid.
 
 ---
 
@@ -176,8 +182,8 @@ Other things worth knowing before editing:
 * A query fires on pointer-**up** only if the pointer moved < 5 px, so orbiting never
   triggers one.
 * Initial quality is guessed from pointer type / screen size / core count, then corrected
-  once by measuring the first ~100 frames and stepping down if the average is worse than
-  28 fps.
+  from measured median and 90th-percentile frame time. At most two tier changes are allowed,
+  and a device that has already been demoted is never promoted again in the same session.
 
 ## Controls
 

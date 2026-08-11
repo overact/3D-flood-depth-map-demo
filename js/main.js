@@ -12,11 +12,18 @@ import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { loadDataset, sampleRaster, sampleNearest, worldToLonLat, buildStatsIndex } from './data.js';
-import { buildTerrainGeometry, createTerrainMaterial, createSideMaterial, FLAG_OUT } from './terrain.js';
+import { buildTerrainGeometry, createTerrainMaterial, FLAG_OUT } from './terrain.js';
 import { createWaterMaterial, createWaterGeometry } from './water.js';
 import { createUI } from './ui.js';
 
 const WATER_LAYER = 1;
+const BASELINE_EPSILON = 0.0005;
+
+function isWetCell(flag, need, offset) {
+  if (flag & FLAG_OUT) return false;
+  if (flag & 2) return true;
+  return Math.abs(offset) < BASELINE_EPSILON ? !!(flag & 1) : offset >= need;
+}
 const QUALITY = {
   high:   { stride: 1, water: [896, 832], dpr: 2.0 },
   medium: { stride: 2, water: [640, 594], dpr: 1.5 },
@@ -157,12 +164,11 @@ const COARSE_POINTER = typeof matchMedia === 'function' && matchMedia('(pointer:
 
 const state = {
   waterOffset: 0,
-  // 14x. The DEM spans 352 m of relief over 39 km; at 1:1 the floodplain is a sheet of
-  // paper and the flood reads as a stain on it rather than as water with a volume.
-  vertExag: 14,
+  // Four times keeps the floodplain legible without turning coastal relief into spikes.
+  vertExag: 4,
   sunAzimuth: 138,
   sunElevation: 34,
-  waveAmp: 1,
+  waveAmp: 0.3,
   turbidity: 1,
   foam: 1,
   science: false,
@@ -175,7 +181,7 @@ const state = {
 let renderer, scene, camera, controls, ui, dataset;
 let sceneRT, blitScene, blitCam, blitMat;
 let sky, sun = new THREE.Vector3(), sunLight, hemiLight, envCubeRT, envCubeCam, envScene;
-let terrainGroup, terrainMesh, sideMesh, waterMesh, waterMat;
+let terrainGroup, terrainMesh, waterMesh, waterMat;
 let lastT = 0, elapsed = 0, statsTimer = 0, needStats = true, statsQuery = null;
 let tour = null;
 let pointerStart = null;
@@ -392,19 +398,13 @@ function buildScene() {
     scene.remove(terrainGroup);
     terrainMesh.geometry.dispose();
     terrainMesh.material.dispose();
-    if (sideMesh) { sideMesh.geometry.dispose(); sideMesh.material.dispose(); }
   }
-  const { geo, sideGeo } = buildTerrainGeometry(arrays.terrain, arrays.flags, grid, q.stride);
+  const { geo } = buildTerrainGeometry(arrays.terrain, arrays.flags, grid, q.stride);
   terrainGroup = new THREE.Group();
   terrainGroup.scale.set(1, state.vertExag, 1);
   terrainMesh = new THREE.Mesh(geo, createTerrainMaterial(textures.tBasemap));
   terrainMesh.layers.set(0);
   terrainGroup.add(terrainMesh);
-  if (sideGeo) {
-    sideMesh = new THREE.Mesh(sideGeo, createSideMaterial());
-    sideMesh.layers.set(0);
-    terrainGroup.add(sideMesh);
-  }
   scene.add(terrainGroup);
 
   if (waterMesh) { scene.remove(waterMesh); waterMesh.geometry.dispose(); }
@@ -618,7 +618,7 @@ function solveHoverBody(start) {
   const { nx, ny } = meta.grid;
   const need = arrays.need, flags = arrays.flags;
   const off = state.waterOffset;
-  const wet = (i) => !(flags[i] & 4) && off >= need[i];
+  const wet = (i) => isWetCell(flags[i], need[i], off);
   // Bail BEFORE clearing. This used to wipe the mask first and only then discover the start
   // cell was dry, so every time the cursor grazed a bank inside a body — which on a
   // floodplain this fractal is constantly — the highlight was destroyed and the next wet
@@ -688,7 +688,7 @@ function updateHover(dt) {
         const inCurrent = hoverMask && hoverMask[idx] && hoverMaskOffset === state.waterOffset;
         if (inCurrent) {
           want = 1;
-        } else if (!(arrays.flags[idx] & 4) && state.waterOffset >= arrays.need[idx]) {
+        } else if (isWetCell(arrays.flags[idx], arrays.need[idx], state.waterOffset)) {
           // Two array reads decide whether this cell is even wet. Doing that BEFORE the rate
           // limiter means a dry pixel no longer burns the 100 ms budget that the next
           // genuinely-new body needs, so entering a new pool highlights immediately.
@@ -825,7 +825,7 @@ function surfaceHeightAt(x, z) {
     top = Math.max(g, 0);                                  // permanent sea, fixed at AHD 0
   } else {
     const nd = sampleRaster(arrays.need, grid.nx, grid.ny, grid.EW, grid.EH, x, z);
-    if (Number.isFinite(nd) && state.waterOffset >= nd) {
+    if (Number.isFinite(nd) && isWetCell(flag, nd, state.waterOffset)) {
       const ws = meta.wsurfGrid;
       const W = sampleRaster(arrays.wsurf, ws.nx, ws.ny, grid.EW, grid.EH, x, z);
       if (Number.isFinite(W)) top = Math.max(g, W + state.waterOffset);
@@ -913,7 +913,7 @@ function onPointerUp(ev) {
   const W = sampleRaster(arrays.wsurf, ws.nx, ws.ny, grid.EW, grid.EH, p.x, p.z);
   const isSea = !!(flag & 2);
   const surface = isSea ? state.waterOffset * 0 : W + state.waterOffset;
-  const wet = isSea || (state.waterOffset >= need && surface > ground);
+  const wet = isWetCell(flag, need, state.waterOffset) && (isSea || surface > ground);
   const { lon, lat } = worldToLonLat(meta, p.x, p.z);
   ui.setQuery({
     lon, lat, x: p.x, z: p.z,

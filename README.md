@@ -2,14 +2,16 @@
 
 ## Live visualization
 
-**[Open the interactive 3D flood depth map →](https://overact.github.io/3D-flood-depth-map-demo/)**
+**[Open the interactive true-3D flood depth map →](https://overact.github.io/3D-flood-depth-map-demo/)**
+
+**[Open the original 2.5D viewer →](https://overact.github.io/3D-flood-depth-map-demo/legacy_qgis2threejs.html)**
 
 An interactive 3D flood depth map of Kempsey, NSW, Australia — the 26 March 2021 Macleay
 River flood.
 
-The flood is rendered as a real water surface in 3D: its height is HOTA's published water
-surface, and a slider raises or lowers it, re-solving the inundated extent by hydraulic
-connectivity. At Δ = 0 the extent and the depth field reproduce the published result exactly.
+The default viewer renders a separate water surface, supports water-level scenarios, and uses
+the published HOTA mask and statistics exactly at Δ = 0. The original Qgis2threejs 2.5D
+publication demo remains available as a stable legacy page.
 
 **Method** — SegFormer + **HOTA** (Hierarchical Overlap-Tiling Aggregation) + a 3D depth
 refinement module.
@@ -21,6 +23,7 @@ Aggregation for Large-Area 3D Flood Mapping*, in Pattern Recognition and Compute
 Built with [three.js](https://threejs.org/) r185. Imagery: Copernicus Sentinel-2, 26 March
 2021. Terrain: Geoscience Australia 5 m LiDAR DEM (AHD).
 
-Implementation notes, the data pipeline and the water-level model are documented in
-[README_3D.md](README_3D.md). The original Qgis2threejs 2.5D export is preserved as
-`legacy_qgis2threejs.html`.
+Implementation notes, the native-resolution LOD pipeline and the water-level model are
+documented in [README_3D.md](README_3D.md). Region metadata lives in
+`regions/kempsey/manifest.json`; `tools/build_lod_tiles.py` can generate native 5.843 m tiles
+for CDN/object-storage deployment without committing the full tile package to this repository.

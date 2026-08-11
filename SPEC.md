@@ -30,7 +30,7 @@ Never import a second copy of three. Never use `dat.gui` (use `lil-gui` from `th
   ever reaches a shader.
 * `X` = east, `Z` = **south** (north is −Z).
 * `X ∈ [-EW/2, +EW/2]`, `Z ∈ [-EH/2, +EH/2]`, `EW = 39230`, `EH = 36414.1748046875`.
-* Height: `y = elevation_metres * vertExag`. `vertExag` is a live uniform/scale (default 5).
+* Height: `y = elevation_metres * vertExag`. `vertExag` is a live uniform/scale (default 4).
 * **UV convention (all textures, including the basemap):** `u = (x + EW/2)/EW`,
   `v = (z + EH/2)/EH`. So **v = 0 is NORTH** (data row 0). The basemap texture is created
   with `flipY = false` so it obeys the same rule. Do not "fix" this.
@@ -107,8 +107,8 @@ drive them):
 ```
 uTime            float   seconds
 uWaterOffset     float   metres, −3…+5
-uVertExag        float   1…20      (vertical exaggeration; y = elev * uVertExag)
-uWaveAmp         float   0…2       ripple strength multiplier, default 1
+uVertExag        float   1…30      (vertical exaggeration; y = elev * uVertExag)
+uWaveAmp         float   0…2       ripple strength multiplier, default 0.3
 uTurbidity       float   0.05…1.5  Beer–Lambert extinction scale, default 1
 uFoam            float   0…1       shoreline foam strength, default 1
 uScience         float   0 or 1    0 = photoreal, 1 = HOTA Blues depth ramp
@@ -182,15 +182,15 @@ export function createUI(opts) -> { setStats, setQuery, setStatus, gui, state }
 ```js
 state = {
   waterOffset: 0,      // m, -3 … 5, step 0.05
-  vertExag: 5,         // 1 … 20
+  vertExag: 4,         // 1 … 30
   sunAzimuth: 135,     // deg
   sunElevation: 32,    // deg, 1 … 88
-  waveAmp: 1,          // 0 … 2
+  waveAmp: 0.3,        // 0 … 2
   turbidity: 1,        // 0.05 … 1.5
   foam: 1,             // 0 … 1
   science: false,      // bool  -> uScience
   showWater: true,
-  autoRotate: false,
+  autoRotate: true,
   quality: 'high',     // 'high' | 'medium' | 'low'
 }
 onAction(name)  // 'screenshot' | 'flyTour' | 'resetView' | 'topView'

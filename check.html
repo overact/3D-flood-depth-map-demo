@@ -222,7 +222,8 @@ try {
           if (f & 4 || f & 2) continue;
           const rn = u16(Nd, i);
           const nv = rn === 65535 ? 9 : meta.need.min + rn * kN;
-          if (d < nv) continue;
+          // Delta zero must reproduce the published mask, not a reconstructed threshold.
+          if (d === 0 ? !(f & 1) : d < nv) continue;
           const wv = meta.elev.min + u16(W, wz + Math.min(ws.nx - 1, (ix * ws.nx / nx) | 0)) * kE;
           const dep = (f & 1) ? (d - nv)
                               : Math.max(wv + d - (meta.elev.min + u16(T, i) * kE), d - nv);
@@ -233,7 +234,14 @@ try {
       rows.push(['delta = +' + d.toFixed(2) + ' m',
         (n * cellA / 1e6).toFixed(2).padStart(8) + ' km2   ' + (vol * cellA / 1e6).toFixed(2).padStart(8) + ' Mm3',
         n > 0 ? 'ok' : 'bad']);
-      if (d === 0 && n === 0) problems.push('wet-cell test yields 0 cells at delta = 0');
+      if (d === 0) {
+        const area = n * cellA / 1e6, volume = vol * cellA / 1e6;
+        const areaTolerance = cellA / 1e6 + 1e-9;
+        if (Math.abs(area - meta.stats.observedAreaKm2) > areaTolerance
+            || Math.abs(volume - meta.stats.observedVolumeMm3) > 0.001) {
+          problems.push('delta = 0 does not reproduce the published area/volume baseline');
+        }
+      }
     }
     rows.push(['expected at delta = 0', meta.stats.observedAreaKm2.toFixed(2) + ' km2   ' + meta.stats.observedVolumeMm3.toFixed(2) + ' Mm3']);
     section('recomputed statistics (independent of the viewer code)', rows);

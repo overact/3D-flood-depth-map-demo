@@ -13,6 +13,7 @@
  */
 
 import * as THREE from 'three';
+import { loadRegionManifest } from './lod/region.js';
 
 const R_EARTH = 6378137.0;
 
@@ -177,9 +178,10 @@ function makeDataTexture(array, w, h, filter) {
 const ASSET_VERSION = '4';
 
 export async function loadDataset(renderer, onProgress = () => {}) {
-  const base = './data3d/';
+  const region = await loadRegionManifest('./regions/kempsey/manifest.json?v=1');
+  const base = new URL(region.overview.base, region.baseUrl).href;
   const v = '?v=' + ASSET_VERSION;
-  const metaRes = await fetch(base + 'meta.json' + v);
+  const metaRes = await fetch(base + region.overview.meta + v);
   if (!metaRes.ok) throw new Error('data3d/meta.json: HTTP ' + metaRes.status);
   const meta = await metaRes.json();
   const { nx, ny } = meta.grid;
@@ -249,6 +251,7 @@ export async function loadDataset(renderer, onProgress = () => {}) {
   }
 
   return {
+    region,
     meta,
     grid: { nx, ny, EW: meta.extent.width, EH: meta.extent.height },
     arrays: { terrain, need, wsurf, flags },
@@ -350,6 +353,20 @@ export function buildStatsIndex(arrays, meta) {
    * Both are prefix sums over `need`, so the whole 2.2 M-cell sweep collapses to a lookup.
    */
   return function query(offset) {
+    // The published baseline is authoritative. The connectivity threshold is reconstructed
+    // for scenario offsets and can include a handful of numerically marginal dry cells at
+    // zero, so use the source result verbatim at the neutral position.
+    if (Math.abs(offset) < 0.0005) {
+      const areaKm2 = meta.stats.observedAreaKm2;
+      const volumeMm3 = meta.stats.observedVolumeMm3;
+      return {
+        areaKm2,
+        volumeMm3,
+        maxDepth: meta.depthMaxObserved,
+        meanDepth: areaKm2 > 0 ? volumeMm3 / areaKm2 : 0,
+        offset: 0,
+      };
+    }
     let b = Math.floor((offset - LO) / BIN);
     if (b < 0) return { areaKm2: 0, volumeMm3: 0, maxDepth: 0, meanDepth: 0, offset };
     if (b >= N) b = N - 1;
@@ -371,6 +388,7 @@ export function computeStats(arrays, meta, offset) {
   const { nx, ny } = meta.grid;
   const ws = meta.wsurfGrid;
   const cellA = meta.stats.cellX * meta.stats.cellY * meta.stats.mercatorAreaFactor;
+  const publishedBaseline = Math.abs(offset) < 0.0005;
   let wetCells = 0, volume = 0, maxDepth = 0;
   for (let iz = 0; iz < ny; iz++) {
     // wsurf is a coarse smooth raster; nearest-sample is plenty for an integral
@@ -379,7 +397,7 @@ export function computeStats(arrays, meta, offset) {
       const i = iz * nx + ix;
       const f = flags[i];
       if (f & 4 || f & 2) continue;             // outside footprint, or permanent sea
-      if (offset < need[i]) continue;
+      if (publishedBaseline ? !(f & 1) : offset < need[i]) continue;
       const W = wsurf[wz + Math.min(ws.nx - 1, (ix * ws.nx / nx) | 0)];
       const d = (f & 1) ? (offset - need[i]) : Math.max(W + offset - terrain[i], offset - need[i]);
       if (d <= 0) continue;

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Kempsey 3D Flood Depth Map — HOTA</title>
-<meta name="description" content="Interactive true-3D flood depth visualisation of Kempsey, NSW, built from HOTA (SegFormer + Hierarchical Overlap-Tiling Aggregation) flood depth and a 5 m LiDAR DEM.">
+<meta name="description" content="Interactive true-3D flood visualisation of Kempsey, NSW, built from HOTA flood depth and a LiDAR DEM.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23102030'/%3E%3Cpath d='M2 21h28v9H2z' fill='%232171b5'/%3E%3Cpath d='M2 21l7-6 6 4 8-9 9 7v3z' fill='%236b7a5a'/%3E%3Cpath d='M2 24q4-2 7 0t7 0 7 0 7 0v6H2z' fill='%234292c6' opacity='.85'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="./style.css">
 <script type="importmap">
@@ -19,8 +19,6 @@
 <body>
 <noscript><p style="color:#fff;font:14px system-ui;padding:2rem">This viewer requires JavaScript and WebGL2.</p></noscript>
 <script>
-// Opening this file by double-clicking gives file://, where the browser blocks ES modules
-// and fetch outright. main.js would never even start, leaving a blank page with no clue.
 if (location.protocol === 'file:') {
   document.write('<div style="max-width:46em;margin:14vh auto;padding:0 6vw;color:#d7dde4;'
     + 'font:15px/1.65 system-ui,-apple-system,Segoe UI,sans-serif">'
@@ -29,9 +27,7 @@ if (location.protocol === 'file:') {
     + 'Nothing is broken — it just needs a real HTTP origin.</p>'
     + '<p><b>Double-click <code>start_viewer.bat</code></b> in this folder; it serves the folder '
     + 'and opens <code>http://localhost:8123/</code> for you.</p>'
-    + '<p style="color:#7d8894">Or, from a terminal in this folder: '
-    + '<code>python -m http.server 8123</code> &nbsp;then browse to '
-    + '<code>http://localhost:8123/</code></p></div>');
+    + '<p style="color:#7d8894">Or serve this folder over HTTP and open its root URL.</p></div>');
 } else {
   document.write('<scr' + 'ipt type="module" src="./js/main.js"></scr' + 'ipt>');
 }

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://overact.github.io/3D-flood-depth-map-demo/regions/schema/region.schema.json",
+  "title": "Flood viewer region manifest",
+  "type": "object",
+  "required": ["schemaVersion", "id", "title", "crs", "bounds", "sourceResolution", "overview", "lod"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "title": { "type": "string", "minLength": 1 },
+    "crs": { "type": "string", "minLength": 1 },
+    "bounds": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "sourceResolution": {
+      "type": "object",
+      "required": ["terrainMetres", "depthMetres", "imageryMetres"],
+      "properties": {
+        "terrainMetres": { "type": "number", "exclusiveMinimum": 0 },
+        "depthMetres": { "type": "number", "exclusiveMinimum": 0 },
+        "imageryMetres": { "type": "number", "exclusiveMinimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "overview": {
+      "type": "object",
+      "required": ["base", "meta", "resolutionMetres"],
+      "properties": {
+        "base": { "type": "string" },
+        "meta": { "type": "string" },
+        "resolutionMetres": { "type": "number", "exclusiveMinimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "lod": {
+      "type": "object",
+      "required": ["tileSamples", "minLevel", "maxLevel", "levelZeroDecimation", "urlTemplate", "available"],
+      "properties": {
+        "tileSamples": { "type": "integer", "minimum": 3 },
+        "minLevel": { "type": "integer", "minimum": 0 },
+        "maxLevel": { "type": "integer", "minimum": 0 },
+        "levelZeroDecimation": { "type": "integer", "minimum": 1 },
+        "urlTemplate": { "type": "string" },
+        "available": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}
