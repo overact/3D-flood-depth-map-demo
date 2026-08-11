@@ -481,7 +481,7 @@ void main() {
   //
   // The bracket is an assumed vertical disagreement in TRUE metres (~0.25 m of relief across
   // one water cell on a floodplain, plus up to 1.1 m of swell), which the exaggeration then
-  // scales into world units along with everything else. At the 4x default this is ~3.2 m
+  // scales into world units along with everything else. At the 8x default this is ~6.4 m
   // of view-space slack — i.e. water may composite over terrain up to about 0.8 m of REAL
   // elevation nearer the camera, not "a few centimetres". Measured cost of that at a grazing
   // view from a 307 m ridge: +0.6-0.8% extra water, all of it below the horizon line, none

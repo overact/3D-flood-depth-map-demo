@@ -164,11 +164,11 @@ const COARSE_POINTER = typeof matchMedia === 'function' && matchMedia('(pointer:
 
 const state = {
   waterOffset: 0,
-  // Four times keeps the floodplain legible without turning coastal relief into spikes.
-  vertExag: 4,
+  // Eight times keeps the broad floodplain legible while NoData boundary walls stay disabled.
+  vertExag: 8,
   sunAzimuth: 138,
   sunElevation: 34,
-  waveAmp: 0.3,
+  waveAmp: 1,
   turbidity: 1,
   foam: 1,
   science: false,

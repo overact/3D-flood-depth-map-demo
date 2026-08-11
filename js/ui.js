@@ -52,10 +52,10 @@ const BLUES = [
 /** Contract §5 defaults — filled in for any key `main.js` left undefined. */
 const STATE_DEFAULTS = {
   waterOffset: 0,
-  vertExag: 4,
+  vertExag: 8,
   sunAzimuth: 135,
   sunElevation: 32,
-  waveAmp: 0.3,
+  waveAmp: 1,
   turbidity: 1,
   foam: 1,
   science: false,
@@ -1329,7 +1329,7 @@ export function createUI(opts = {}) {
   const fLight = gui.addFolder('Light & terrain');
   bind(fLight, 'sunAzimuth', 'Sun azimuth (°)', 0, 360, 1);
   bind(fLight, 'sunElevation', 'Sun elevation (°)', 1, 88, 1);
-  // Keep a wide diagnostic range even though the restrained default is 4x.
+  // Keep a wide diagnostic range around the 8x default.
   bind(fLight, 'vertExag', 'Vertical exaggeration (×)', 1, 30, 0.5);
 
   // --- water material -------------------------------------------------
