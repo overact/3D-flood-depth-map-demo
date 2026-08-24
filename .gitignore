@@ -8,6 +8,7 @@ data3d/*.bin
 __pycache__/
 .DS_Store
 Thumbs.db
+_local_backup/
 
 # browser QA and generated high-resolution tile packages
 .playwright-cli/
