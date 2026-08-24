@@ -6,6 +6,10 @@
  *
  *   node tools/fetch_context_layers.mjs
  *
+ * By default an existing GlobalBuildingAtlas snapshot is preserved and the
+ * existing population snapshot is preserved. Use --refresh-osm-buildings or
+ * --refresh-sa1-population only when deliberately replacing those layers.
+ *
  * Output is intentionally small, local-coordinate JSON so the GitHub Pages build
  * stays dependency-free and the renderer can batch every layer into one geometry.
  */
@@ -20,6 +24,8 @@ const R_EARTH = 6378137;
 
 const meta = JSON.parse(await readFile(path.join(ROOT, 'data3d', 'meta.json'), 'utf8'));
 const extent = meta.extent;
+const mercatorAreaFactor = Number(meta.stats?.mercatorAreaFactor) ||
+  Math.cos((Number(extent.latCentre) || 0) * Math.PI / 180) ** 2;
 const bbox = {
   west: extent.left / R_EARTH * 180 / Math.PI,
   east: extent.right / R_EARTH * 180 / Math.PI,
@@ -29,6 +35,35 @@ const bbox = {
 
 const bboxText = `${bbox.south},${bbox.west},${bbox.north},${bbox.east}`;
 const generatedAt = new Date().toISOString();
+const args = new Set(process.argv.slice(2));
+const refreshSa1Population = args.has('--refresh-sa1-population');
+const refreshOsmBuildings = args.has('--refresh-osm-buildings');
+const overpassInfo = {};
+
+async function readJsonIfExists(file) {
+  try {
+    return JSON.parse(await readFile(file, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+const existingManifest = await readJsonIfExists(path.join(OUT, 'manifest.json'));
+const existingBuildingsSnapshot = await readJsonIfExists(path.join(OUT, 'buildings.json'));
+const existingPopulationFile = existingManifest?.layers?.population?.file || 'population_sa1.json';
+const existingPopulationSnapshot = await readJsonIfExists(path.join(OUT, existingPopulationFile));
+const preserveGbaBuildings = !refreshOsmBuildings &&
+  String(existingBuildingsSnapshot?.source || '').includes('GlobalBuildingAtlas');
+const shouldFetchSa1Population = refreshSa1Population || !existingPopulationSnapshot;
+// ArcGIS/Overpass return complete features that intersect the request bbox. Clip
+// their local geometry back to the exact raster rectangle so every context layer
+// shares the same drawable extent as the flood scene.
+const bounds = {
+  minX: extent.left - extent.cx,
+  maxX: extent.right - extent.cx,
+  minZ: extent.cy - extent.top,
+  maxZ: extent.cy - extent.bottom,
+};
 
 function round(v, digits = 1) {
   const p = 10 ** digits;
@@ -94,6 +129,105 @@ function samePoint(a, b) {
   return !!a && !!b && Math.abs(a[0] - b[0]) < 0.01 && Math.abs(a[1] - b[1]) < 0.01;
 }
 
+function clipIntersection(a, b, axis, value) {
+  const d = b[axis] - a[axis];
+  const t = Math.abs(d) < 1e-9 ? 0 : (value - a[axis]) / d;
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+}
+
+function clipRing(points) {
+  const source = points.length > 1 && samePoint(points[0], points.at(-1))
+    ? points.slice(0, -1) : points.slice();
+  if (source.length < 3) return [];
+  const edges = [
+    { inside: (p) => p[0] >= bounds.minX, axis: 0, value: bounds.minX },
+    { inside: (p) => p[0] <= bounds.maxX, axis: 0, value: bounds.maxX },
+    { inside: (p) => p[1] >= bounds.minZ, axis: 1, value: bounds.minZ },
+    { inside: (p) => p[1] <= bounds.maxZ, axis: 1, value: bounds.maxZ },
+  ];
+  let clipped = source;
+  for (const edge of edges) {
+    if (!clipped.length) break;
+    const output = [];
+    let previous = clipped.at(-1);
+    let previousInside = edge.inside(previous);
+    for (const current of clipped) {
+      const currentInside = edge.inside(current);
+      if (currentInside) {
+        if (!previousInside) output.push(clipIntersection(previous, current, edge.axis, edge.value));
+        output.push(current);
+      } else if (previousInside) {
+        output.push(clipIntersection(previous, current, edge.axis, edge.value));
+      }
+      previous = current;
+      previousInside = currentInside;
+    }
+    clipped = output;
+  }
+  const clean = [];
+  for (const p of clipped) {
+    const rounded = [round(p[0]), round(p[1])];
+    if (!clean.length || !samePoint(clean.at(-1), rounded)) clean.push(rounded);
+  }
+  if (clean.length > 1 && samePoint(clean[0], clean.at(-1))) clean.pop();
+  if (clean.length < 3) return [];
+  clean.push(clean[0]);
+  return clean;
+}
+
+function clipSegment(a, b) {
+  const dx = b[0] - a[0];
+  const dz = b[1] - a[1];
+  let t0 = 0;
+  let t1 = 1;
+  const tests = [
+    [-dx, a[0] - bounds.minX],
+    [ dx, bounds.maxX - a[0]],
+    [-dz, a[1] - bounds.minZ],
+    [ dz, bounds.maxZ - a[1]],
+  ];
+  for (const [p, q] of tests) {
+    if (Math.abs(p) < 1e-9) {
+      if (q < 0) return null;
+      continue;
+    }
+    const t = q / p;
+    if (p < 0) {
+      if (t > t1) return null;
+      if (t > t0) t0 = t;
+    } else {
+      if (t < t0) return null;
+      if (t < t1) t1 = t;
+    }
+  }
+  return [
+    [round(a[0] + dx * t0), round(a[1] + dz * t0)],
+    [round(a[0] + dx * t1), round(a[1] + dz * t1)],
+  ];
+}
+
+function clipLine(points) {
+  const parts = [];
+  let current = [];
+  const flush = () => {
+    if (current.length >= 2) parts.push(current);
+    current = [];
+  };
+  for (let i = 0; i < points.length - 1; i++) {
+    const segment = clipSegment(points[i], points[i + 1]);
+    if (!segment) {
+      flush();
+      continue;
+    }
+    const [a, b] = segment;
+    if (!current.length) current.push(a, b);
+    else if (samePoint(current.at(-1), a)) current.push(b);
+    else { flush(); current.push(a, b); }
+  }
+  flush();
+  return parts;
+}
+
 function elementLine(element, tolerance = 1, closed = false) {
   const raw = (element.geometry || []).map((p) => localPoint(p.lon, p.lat));
   const clean = [];
@@ -110,10 +244,14 @@ function parseMetres(value) {
 
 function buildingHeight(tags) {
   const explicit = parseMetres(tags.height || tags['building:height']);
-  if (Number.isFinite(explicit) && explicit > 0) return Math.min(60, Math.max(2.5, explicit));
+  if (Number.isFinite(explicit) && explicit > 0) {
+    return { height: Math.min(60, Math.max(2.5, explicit)), source: 'height tag' };
+  }
   const levels = parseMetres(tags['building:levels'] || tags.levels);
-  if (Number.isFinite(levels) && levels > 0) return Math.min(60, Math.max(2.5, levels * 3.1));
-  return 3.5;
+  if (Number.isFinite(levels) && levels > 0) {
+    return { height: Math.min(60, Math.max(2.5, levels * 3.1)), source: 'levels × 3.1 m' };
+  }
+  return { height: 3.5, source: 'estimated fallback' };
 }
 
 async function overpass(query, label) {
@@ -135,6 +273,10 @@ async function overpass(query, label) {
       });
       if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
       const json = await response.json();
+      overpassInfo[label] = {
+        endpoint,
+        timestamp: json.osm3s?.timestamp_osm_base || null,
+      };
       console.log(`${label}: ${json.elements?.length || 0} OSM elements from ${endpoint}`);
       return json.elements || [];
     } catch (error) {
@@ -154,23 +296,43 @@ function polygonArea(ring) {
 }
 
 function populationDensity(features) {
-  return features.map((feature) => {
+  const output = [];
+  for (const feature of features) {
     const p = feature.properties || {};
-    const rings = (feature.geometry?.coordinates || []).map((ring) =>
-      simplify(ring.map(([x, y]) => [round(x - extent.cx), round(extent.cy - y)]), 10, true));
-    if (!rings.length || rings[0].length < 4) return null;
-    const areas = rings.map(polygonArea);
-    const outer = Math.max(...areas);
-    const areaM2 = Math.max(1, outer - areas.reduce((sum, a) => sum + (a === outer ? 0 : a), 0));
+    const geometry = feature.geometry;
+    if (!geometry?.coordinates) continue;
+    const polygons = geometry.type === 'MultiPolygon'
+      ? geometry.coordinates
+      : [geometry.coordinates];
+    const localPolygons = polygons.map((polygon) => polygon.map((ring) =>
+      simplify(ring.map(([x, y]) => [round(x - extent.cx), round(extent.cy - y)]), 10, true)));
+    const projectedAreaM2 = Math.max(1, localPolygons.reduce((sum, rings) => {
+      if (!rings.length) return sum;
+      return sum + polygonArea(rings[0]) - rings.slice(1).reduce((s, ring) => s + polygonArea(ring), 0);
+    }, 0));
+    // SA1 geometry is returned in Web Mercator. Convert projected area back to
+    // approximate ground area using the same factor used by the flood stats.
+    const areaM2 = projectedAreaM2 * mercatorAreaFactor;
     const population = Number(p.Tot_P_P) || 0;
-    return {
-      id: String(p.SA1_CODE_2021 || feature.id || ''),
-      population,
-      density: round(population / (areaM2 / 1e6), 1),
-      areaKm2: round(areaM2 / 1e6, 3),
-      rings,
-    };
-  }).filter(Boolean);
+    const density = round(population / (areaM2 / 1e6), 1);
+    let part = 0;
+    for (const rings of localPolygons) {
+      const outer = clipRing(rings[0] || []);
+      if (outer.length < 4) continue;
+      const holes = rings.slice(1).map(clipRing).filter((ring) => ring.length >= 4);
+      output.push({
+        id: String(p.SA1_CODE_2021 || feature.id || '') + (part ? `:${part}` : ''),
+        sourceId: String(p.SA1_CODE_2021 || feature.id || ''),
+        partIndex: part,
+        population: part === 0 ? population : 0,
+        density,
+        areaKm2: part === 0 ? round(areaM2 / 1e6, 3) : 0,
+        rings: [outer, ...holes],
+      });
+      part++;
+    }
+  }
+  return output;
 }
 
 async function fetchAbsPopulation() {
@@ -200,43 +362,57 @@ async function fetchAbsPopulation() {
   return features;
 }
 
-const buildingElements = await overpass(
+const buildingElements = preserveGbaBuildings ? [] : await overpass(
   `[out:json][timeout:180];way["building"](${bboxText});out tags geom;`, 'buildings');
 const roadElements = await overpass(
   `[out:json][timeout:180];way[highway](${bboxText});out tags geom;`, 'roads');
 const waterElements = await overpass(
   `[out:json][timeout:180];(way["natural"="water"](${bboxText});way[waterway](${bboxText}););out tags geom;`, 'water');
-const populationFeatures = await fetchAbsPopulation();
+const populationFeatures = shouldFetchSa1Population
+  ? await fetchAbsPopulation()
+  : existingPopulationSnapshot.features || [];
 
-const buildings = buildingElements.map((e) => {
-  const ring = elementLine(e, 0.5, true);
+const osmBuildings = buildingElements.map((e) => {
+  const ring = clipRing(elementLine(e, 0.5, true));
   if (ring.length < 4) return null;
   const tags = e.tags || {};
+  const heightInfo = buildingHeight(tags);
   return {
     id: String(e.id),
-    height: round(buildingHeight(tags), 1),
+    height: round(heightInfo.height, 1),
+    heightSource: heightInfo.source,
     levels: Number.isFinite(parseMetres(tags['building:levels'])) ? parseMetres(tags['building:levels']) : null,
     ring,
   };
 }).filter(Boolean);
+const buildings = preserveGbaBuildings ? existingBuildingsSnapshot.features || [] : osmBuildings;
 
 const ignoredRoads = new Set(['footway', 'path', 'cycleway', 'bridleway', 'steps', 'corridor',
   'pedestrian', 'construction', 'proposed', 'platform', 'raceway']);
-const roads = roadElements.map((e) => {
+const roads = roadElements.flatMap((e) => {
   const tags = e.tags || {};
   const roadClass = tags.highway || 'road';
-  if (ignoredRoads.has(roadClass)) return null;
-  const line = elementLine(e, 1, false);
-  if (line.length < 2) return null;
-  return {
-    id: String(e.id),
+  if (ignoredRoads.has(roadClass)) return [];
+  const lines = clipLine(elementLine(e, 1, false));
+  const width = parseMetres(tags.width);
+  const lanes = parseMetres(tags.lanes);
+  const osmLayer = parseMetres(tags.layer);
+  return lines.map((line, i) => ({
+    id: String(e.id) + (i ? `:${i}` : ''),
     class: roadClass,
     name: tags.name || '',
-    bridge: tags.bridge === 'yes',
-    tunnel: tags.tunnel === 'yes',
+    bridge: !!tags.bridge && tags.bridge !== 'no',
+    tunnel: !!tags.tunnel && tags.tunnel !== 'no',
+    width: Number.isFinite(width) ? round(width, 2) : null,
+    lanes: Number.isFinite(lanes) ? round(lanes, 1) : null,
+    surface: tags.surface || null,
+    tracktype: tags.tracktype || null,
+    service: tags.service || null,
+    layer: Number.isFinite(osmLayer) ? round(osmLayer, 1) : 0,
+    oneway: tags.oneway === 'yes',
     line,
-  };
-}).filter(Boolean);
+  }));
+});
 
 const waterPolygons = [];
 const waterLines = [];
@@ -244,8 +420,11 @@ for (const e of waterElements) {
   const tags = e.tags || {};
   const closed = tags.natural === 'water';
   const points = elementLine(e, closed ? 2 : 2, closed);
-  if (closed && points.length >= 4) waterPolygons.push({ id: String(e.id), kind: tags.water || tags.natural, ring: points });
-  else if (!closed && points.length >= 2) waterLines.push({ id: String(e.id), kind: tags.waterway || 'waterway', line: points });
+  const clipped = closed ? clipRing(points) : clipLine(points);
+  if (closed && clipped.length >= 4) waterPolygons.push({ id: String(e.id), kind: tags.water || tags.natural, ring: clipped });
+  else if (!closed) clipped.forEach((line, i) => {
+    if (line.length >= 2) waterLines.push({ id: String(e.id) + (i ? `:${i}` : ''), kind: tags.waterway || 'waterway', line });
+  });
 }
 
 await mkdir(OUT, { recursive: true });
@@ -253,17 +432,23 @@ const writeJson = async (name, value) => {
   await writeFile(path.join(OUT, name), JSON.stringify(value));
 };
 
-await writeJson('buildings.json', {
-  version: 1,
-  generatedAt,
-  source: 'OpenStreetMap contributors via Overpass API',
-  bbox,
-  features: buildings,
-});
+if (!preserveGbaBuildings) {
+  await writeJson('buildings.json', {
+    version: 1,
+    generatedAt,
+    source: 'OpenStreetMap contributors via Overpass API',
+    bbox,
+    features: buildings,
+  });
+}
 await writeJson('roads.json', {
   version: 1,
   generatedAt,
   source: 'OpenStreetMap contributors via Overpass API',
+  sourceDate: overpassInfo.roads?.timestamp || null,
+  queryEndpoint: overpassInfo.roads?.endpoint || null,
+  queryBbox: bboxText,
+  ignoredHighwayTags: [...ignoredRoads],
   bbox,
   features: roads,
 });
@@ -271,33 +456,83 @@ await writeJson('water.json', {
   version: 1,
   generatedAt,
   source: 'OpenStreetMap contributors via Overpass API',
+  sourceDate: overpassInfo.water?.timestamp || null,
+  queryEndpoint: overpassInfo.water?.endpoint || null,
+  queryBbox: bboxText,
+  query: '(way[natural=water]; way[waterway])',
   bbox,
   polygons: waterPolygons,
   lines: waterLines,
 });
-await writeJson('population_sa1.json', {
-  version: 1,
-  generatedAt,
-  source: 'Australian Bureau of Statistics, 2021 Census General Community Profile, SA1',
-  bbox,
-  year: 2021,
-  value: 'Total population / polygon area (people per km²)',
-  features: populationFeatures,
-});
+if (shouldFetchSa1Population) {
+  await writeJson('population_sa1.json', {
+    version: 1,
+    generatedAt,
+    source: 'Australian Bureau of Statistics, 2021 Census General Community Profile, SA1',
+    bbox,
+    year: 2021,
+    value: 'Total population / polygon area (people per km²)',
+    areaCorrection: mercatorAreaFactor,
+    areaMethod: 'EPSG:3857 polygon area × meta.stats.mercatorAreaFactor',
+    features: populationFeatures,
+  });
+}
+const buildingLayer = preserveGbaBuildings
+  ? { ...(existingManifest?.layers?.buildings || {}), file: 'buildings.json', count: buildings.length }
+  : {
+      file: 'buildings.json',
+      count: buildings.length,
+      source: 'OSM via Overpass API',
+      heightSources: buildings.reduce((summary, feature) => {
+        summary[feature.heightSource] = (summary[feature.heightSource] || 0) + 1;
+        return summary;
+      }, {}),
+    };
+const populationLayer = shouldFetchSa1Population
+  ? { file: 'population_sa1.json', count: populationFeatures.length, source: 'ABS 2021 Census SA1' }
+  : {
+      ...(existingManifest?.layers?.population || {}),
+      file: existingPopulationFile,
+      count: populationFeatures.length,
+      source: existingPopulationSnapshot?.source || existingManifest?.layers?.population?.source || 'ABS population snapshot',
+      year: existingPopulationSnapshot?.year,
+      geography: existingPopulationSnapshot?.geography,
+      populationField: existingPopulationSnapshot?.populationField,
+      dwellingField: existingPopulationSnapshot?.dwellingField,
+      boundarySource: existingPopulationSnapshot?.boundarySource,
+      countSource: existingPopulationSnapshot?.countSource,
+    };
+const absAttribution = shouldFetchSa1Population
+  ? 'Australian Bureau of Statistics, 2021 Census General Community Profile (CC BY 4.0)'
+  : 'Australian Bureau of Statistics, 2021 Census Mesh Block Counts + ASGS 2021 Mesh Block boundaries (CC BY 4.0)';
 await writeJson('manifest.json', {
   version: 1,
   generatedAt,
   bbox,
   layers: {
-    buildings: { file: 'buildings.json', count: buildings.length, source: 'OSM via Overpass API' },
-    roads: { file: 'roads.json', count: roads.length, source: 'OSM via Overpass API' },
-    water: { file: 'water.json', polygons: waterPolygons.length, lines: waterLines.length, source: 'OSM via Overpass API' },
-    population: { file: 'population_sa1.json', count: populationFeatures.length, source: 'ABS 2021 Census SA1' },
+    buildings: buildingLayer,
+    roads: {
+      file: 'roads.json', count: roads.length, source: 'OSM via Overpass API',
+      sourceDate: overpassInfo.roads?.timestamp || null,
+      queryEndpoint: overpassInfo.roads?.endpoint || null,
+      queryBbox: bboxText,
+      ignoredHighwayTags: [...ignoredRoads],
+    },
+    water: {
+      file: 'water.json', polygons: waterPolygons.length, lines: waterLines.length,
+      source: 'OSM via Overpass API',
+      sourceDate: overpassInfo.water?.timestamp || null,
+      queryEndpoint: overpassInfo.water?.endpoint || null,
+      queryBbox: bboxText,
+    },
+    population: populationLayer,
   },
   attribution: [
+    ...(existingManifest?.attribution || []).filter((value) =>
+      !String(value).startsWith('Australian Bureau of Statistics, 2021 Census')),
     '© OpenStreetMap contributors, ODbL 1.0',
-    'Australian Bureau of Statistics, 2021 Census General Community Profile (CC BY 4.0)',
-  ],
+    absAttribution,
+  ].filter((value, index, values) => values.indexOf(value) === index),
 });
 
 console.log(`Wrote context layers to ${OUT}`);

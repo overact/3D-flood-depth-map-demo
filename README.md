@@ -24,3 +24,17 @@ Implementation notes, the native-resolution LOD pipeline and the water-level mod
 documented in [README_3D.md](README_3D.md). Region metadata lives in
 `regions/kempsey/manifest.json`; `tools/build_lod_tiles.py` can generate native 5.843 m tiles
 for CDN/object-storage deployment without committing the full tile package to this repository.
+
+## Context data sources
+
+The optional context layers use:
+
+* building footprints and source-provided heights from [GlobalBuildingAtlas](https://github.com/zhu-xlab/GlobalBuildingAtlas),
+  using the local `GBA.ODbLPolygon` + `GBA.LoD1` snapshot;
+* roads and waterways from [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)
+  via Overpass;
+* population density from [ABS 2021 Census Mesh Block Counts](https://www.abs.gov.au/census/guide-census-data/mesh-block-counts/latest-release)
+  joined to [ASGS 2021 Mesh Block boundaries](https://geo.abs.gov.au/arcgis/rest/services/ASGS2021/MB/MapServer).
+
+See [README_3D.md](README_3D.md) for processing details, snapshot metadata, attribution and
+licensing notes.

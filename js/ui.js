@@ -63,7 +63,7 @@ const STATE_DEFAULTS = {
   showBuildings: true,
   showRoads: true,
   showOsmWater: false,
-  showPopulation: true,
+  showPopulation: false,
   autoRotate: false,
   quality: 'high'
 };
@@ -818,13 +818,23 @@ export function createUI(opts = {}) {
       'Only the ocean and a handful of pixels outside every source raster are a ' +
       'smooth fill.'),
     para('Context layers',
-      ' — optional buildings, roads and water context are sourced from ' +
-      'OpenStreetMap contributors via the Overpass API; OSM data is provided under ' +
-      'the ODbL.'),
+      ' — building footprints and heights use the local GlobalBuildingAtlas LoD1 snapshot; ' +
+      'roads and waterways use an OpenStreetMap snapshot. The population layer uses ABS.'),
+    para('Building heights',
+      ' — the displayed building height is the GBA.LoD1 height attribute in metres; it is ' +
+      'a PlanetScope/ML estimate supplied by GBA, not a value calculated by this project. ' +
+      'The accompanying var field records model prediction variance. Vertical exaggeration ' +
+      'changes display scale, not the stored source height.'),
+    para('Overview readability',
+      ' — at a wide scene scale, detailed solids switch to screen-space building markers ' +
+      'and a road skeleton so small features stay visible; zooming in restores the metric ' +
+      'extrusions and road ribbons.'),
     para('Population density',
-      ' — the population layer uses Australian Bureau of Statistics (ABS) 2021 ' +
-      'Census General Community Profile data at SA1 level, expressed as people per ' +
-      'km²; it is contextual information, not flood depth.')
+      ' — the population layer uses Australian Bureau of Statistics (ABS) 2021 Census ' +
+      'Mesh Block Counts (Persons Usually Resident) joined to official ASGS 2021 Mesh ' +
+      'Block boundaries. Density is people per km² using the full ABS Mesh Block area; ' +
+      'the displayed geometry is clipped to the scene and draped onto the terrain. It is ' +
+      'contextual information, not flood depth.')
   );
 
   // Numeric facts, straight out of meta.json (filled in by applyMeta).

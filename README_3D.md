@@ -101,25 +101,76 @@ The viewer also ships a small, versioned context snapshot in `data/layers/` so G
 does not depend on live third-party requests while the map is being inspected. The optional
 overlays are:
 
-* OSM building footprints, roads and waterways, rebased to the same local EPSG:3857 scene
-  coordinates as the flood rasters.
-* ABS 2021 Census SA1 polygons coloured by people per km² (log-scaled so both rural and town
-  areas remain readable).
+* GlobalBuildingAtlas (GBA) LoD1 building footprints and source-provided heights, rebased
+  to the same local EPSG:3857 scene coordinates as the flood rasters.
+* OpenStreetMap roads and waterways, rebased to the same local EPSG:3857 scene coordinates.
+* ABS 2021 Census Mesh Block polygons coloured by people per km² (log-scaled so both rural
+  and town areas remain readable). Mesh Blocks are finer than SA1s and use the official
+  `Persons Usually Resident` count joined by `MB_CODE_2021`.
+
+All context geometries are clipped to the exact display extent after download. The current
+Kempsey snapshot contains **21,497** building footprints from `GBA.ODbLPolygon`, joined with
+the source-provided `height` and `var` attributes from `GBA.LoD1`; the `GBA.Polygon` input was
+checked during generation but contributed no buildings inside this extent. These heights are
+machine-learning estimates derived from PlanetScope imagery, not building-by-building survey
+measurements. `heightVar` is a model-derived uncertainty indicator, not a surveyed height error
+or a calibrated confidence interval. The viewer's vertical exaggeration magnifies these source
+metre heights together with the terrain; it is a visual setting, not a claim of surveyed elevation.
 
 Buildings and roads are recoloured from their sampled HOTA depth as the water-level slider
 moves, which makes likely impact areas easy to scan without changing the underlying flood
-model. Use **Controls → Context layers** to toggle each overlay independently. The OSM and ABS
-snapshots are static and bounded to the current demo extent; refresh them with:
+model. Buildings also have a batched roof/base/corner outline for a stronger silhouette. The
+context renderer uses a distance-based LOD: close views use metric building solids and road
+ribbons, while wide views swap to screen-space building markers and a sampled road skeleton so
+small features do not disappear below a pixel. Use **Controls → Context layers** to toggle each
+overlay independently. The OSM and ABS snapshots are static and bounded to the current demo
+extent; refresh them with:
 
 ```text
 node tools/fetch_context_layers.mjs
 ```
 
-The refresh script uses OSM through Overpass and the ABS 2021 General Community Profile SA1
-service. OSM data is © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)
-under the [ODbL](https://opendatacommons.org/licenses/odbl/1-0/); ABS Census data is released
-under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The flood run and imagery are
-from 2021, while OSM is a current map snapshot, so the overlays are geographic context rather
+The roads/water refresh script uses OSM through Overpass. Each snapshot records the OSM base
+timestamp, endpoint and query bbox in `roads.json`, `water.json` and `manifest.json`. It
+preserves an existing GlobalBuildingAtlas snapshot and population snapshot unless an explicit
+replacement flag is given. The road snapshot keeps OSM `width`, `lanes`, `surface`, `bridge`,
+`tunnel` and `layer` tags; tagged widths/lanes drive the display where available, while unpaved
+surfaces receive a separate cartographic colour. `bridge=yes` is raised by a small display-only
+offset because OSM does not provide a surveyed bridge deck elevation in this snapshot.
+
+To refresh the finer population layer, run the helper below. It combines the official ABS
+2021 Census Mesh Block Counts workbook with the official ASGS 2021 Mesh Block boundary
+service, then writes only the current scene extent:
+
+```text
+python tools/fetch_meshblock_population.py
+```
+
+For the legacy SA1 layer, use `node tools/fetch_context_layers.mjs --refresh-sa1-population`.
+To deliberately replace the GBA building snapshot with OSM-estimated buildings, use
+`node tools/fetch_context_layers.mjs --refresh-osm-buildings`.
+To refresh buildings from the official release, download the matching
+`e150_s30_e155_s35` files from [GBA.ODbLPolygon](https://huggingface.co/datasets/zhu-xlab/GBA.ODbLPolygon)
+and the `Polygon/` and `LoD1/` folders in [GBA.LoD1](https://huggingface.co/datasets/zhu-xlab/GBA.LoD1),
+then run `tools/fetch_gba_buildings.mjs` with the three local paths. The script deliberately
+does not use the GBA WFS for automated or bulk extraction; the official release is the
+reproducible source for this static snapshot.
+
+The ABS Mesh Block boundary service is [ABS ASGS2021 MB](https://geo.abs.gov.au/arcgis/rest/services/ASGS2021/MB/MapServer),
+and the population counts are from [Census Mesh Block Counts, 2021](https://www.abs.gov.au/census/guide-census-data/mesh-block-counts/latest-release).
+The population layer intentionally uses **ASGS 2021** boundaries because the counts are from
+the 2021 Census; it is not intended to represent the newer ASGS Edition 4 geography. Each
+Mesh Block receives one areal density value, so this is not a building-level population
+estimate or a fine population raster; zero-population roads, parks, water and industrial
+blocks are retained where ABS supplies them.
+Both ABS sources are released under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+GBA.LoD1 is [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/), and the
+GBA.ODbLPolygon footprint component is [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/).
+OSM roads/water are © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)
+under the ODbL.
+The building snapshot combines GBA components with different provenances and licences;
+redistribution or commercial use should be checked against the original [GBA licence notice](https://github.com/zhu-xlab/GlobalBuildingAtlas).
+The flood run and imagery are from 2021, while OSM and GBA are contextual snapshots rather
 than proof that a building or road existed unchanged on the flood date.
 
 ---
@@ -241,7 +292,9 @@ basemap and a coarser mesh automatically on small or low-limit devices.
 
 ## Provenance
 
-Depth and DEM: **HOTA — Hierarchical Overlap-Tiling Aggregation for Large-Area 3D Flood
-Mapping**. Jia, Liang, Lu, Wilaiwongsakul, Khan & Zheng, in *Pattern Recognition and Computer
-Vision* (ACPR 2025), Springer, 2026. https://doi.org/10.1007/978-981-95-4398-4_14
-Imagery: Copernicus Sentinel-2, 26 March 2021.
+Depth and DEM: **[HOTA — Hierarchical Overlap-Tiling Aggregation for Large-Area 3D Flood
+Mapping](https://doi.org/10.1007/978-981-95-4398-4_14)**. Jia, Liang, Lu, Wilaiwongsakul,
+Khan & Zheng, in *Pattern Recognition and Computer Vision* (ACPR 2025), Springer, 2026.
+The terrain is the [Geoscience Australia 5 m LiDAR DEM](https://www.ga.gov.au/scientific-topics/national-location-information/digital-elevation-data)
+(AHD). Imagery is [Copernicus Sentinel-2](https://sentinels.copernicus.eu/sentinel-data-access/sentinel-products/sentinel-2-data-products),
+26 March 2021.

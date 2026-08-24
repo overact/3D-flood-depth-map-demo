@@ -177,7 +177,7 @@ const state = {
   showBuildings: true,
   showRoads: true,
   showOsmWater: false,
-  showPopulation: true,
+  showPopulation: false,
   autoRotate: true,
   hoverFx: !COARSE_POINTER,
   quality: pickInitialQuality(),
@@ -280,6 +280,7 @@ async function init() {
     // blocked by a partial deployment. Keep the failure visible in the console,
     // but do not turn optional overlays into a fatal startup error.
     console.warn('[flood-viewer] context layers unavailable', err);
+    if (contextLayers) contextLayers.dispose();
     contextLayers = null;
     ui.setStatus({ text: 'Context layers unavailable', timeout: 4500 });
   }
@@ -597,6 +598,7 @@ function animate() {
     controls.autoRotateSpeed = 0.35;
     controls.update();
   }
+  if (contextLayers && controls) contextLayers.updateCamera(camera, controls.target);
   if (waterMat) waterMat.uniforms.uTime.value = t;
   updateHover(dt);
   autoTune(raw);

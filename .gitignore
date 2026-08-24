@@ -6,6 +6,7 @@ data3d/*.bin
 # local scratch
 *.pyc
 __pycache__/
+.tmp/
 .DS_Store
 Thumbs.db
 _local_backup/
