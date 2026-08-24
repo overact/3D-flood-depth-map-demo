@@ -14,6 +14,7 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import { loadDataset, sampleRaster, sampleNearest, worldToLonLat, buildStatsIndex } from './data.js';
 import { buildTerrainGeometry, createTerrainMaterial, FLAG_OUT } from './terrain.js';
 import { createWaterMaterial, createWaterGeometry } from './water.js';
+import { loadContextLayers } from './context-layers.js';
 import { createUI } from './ui.js';
 
 const WATER_LAYER = 1;
@@ -173,12 +174,16 @@ const state = {
   foam: 1,
   science: false,
   showWater: true,
+  showBuildings: true,
+  showRoads: true,
+  showOsmWater: false,
+  showPopulation: true,
   autoRotate: true,
   hoverFx: !COARSE_POINTER,
   quality: pickInitialQuality(),
 };
 
-let renderer, scene, camera, controls, ui, dataset;
+let renderer, scene, camera, controls, ui, dataset, contextLayers;
 let sceneRT, blitScene, blitCam, blitMat;
 let sky, sun = new THREE.Vector3(), sunLight, hemiLight, envCubeRT, envCubeCam, envScene;
 let terrainGroup, terrainMesh, waterMesh, waterMat;
@@ -262,6 +267,22 @@ async function init() {
   await frame();
 
   buildScene();
+  setStatus('Loading context layers', 0.90);
+  try {
+    contextLayers = await loadContextLayers({
+      scene,
+      dataset,
+      state,
+      onProgress: (frac, label) => setStatus(`Loading ${label} layer`, 0.90 + frac * 0.05),
+    });
+  } catch (err) {
+    // The terrain viewer remains useful if a static context snapshot is absent or
+    // blocked by a partial deployment. Keep the failure visible in the console,
+    // but do not turn optional overlays into a fatal startup error.
+    console.warn('[flood-viewer] context layers unavailable', err);
+    contextLayers = null;
+    ui.setStatus({ text: 'Context layers unavailable', timeout: 4500 });
+  }
   setStatus('Compiling shaders', 0.96);
   await frame();
 
@@ -334,6 +355,7 @@ async function init() {
     state,
     three: { renderer, scene, get camera() { return camera; }, get controls() { return controls; } },
     get dataset() { return dataset; },
+    get contextLayers() { return contextLayers; },
     pickSurface: (x, y) => pickSurface(new THREE.Vector2(x, y)),
     solveHoverBody: (i) => solveHoverBody(i),
     get hoverCells() { return hoverCells; },
@@ -359,7 +381,7 @@ async function init() {
     }
     if (qs.has('quality')) { renderer.setPixelRatio(effectivePixelRatio(state.quality)); buildScene(); onResize(); }
     if ([...qs.keys()].some((k) => k in state)) {
-      syncUniforms(); updateSun(); updateStats(); ui.refresh && ui.refresh();
+      syncUniforms(); updateSun(); updateStats(); syncContextLayers(); ui.refresh && ui.refresh();
     }
     if (qs.has('cam')) {
       const a = qs.get('cam').split(',').map(Number);
@@ -441,6 +463,17 @@ function syncUniforms() {
   }
   if (terrainGroup) terrainGroup.scale.set(1, state.vertExag, 1);
   if (waterMesh) waterMesh.visible = state.showWater;
+  if (contextLayers) contextLayers.setVerticalExaggeration(state.vertExag);
+}
+
+function syncContextLayers() {
+  if (!contextLayers) return;
+  contextLayers.setVerticalExaggeration(state.vertExag);
+  contextLayers.setVisibility('showBuildings', state.showBuildings);
+  contextLayers.setVisibility('showRoads', state.showRoads);
+  contextLayers.setVisibility('showOsmWater', state.showOsmWater);
+  contextLayers.setVisibility('showPopulation', state.showPopulation);
+  contextLayers.updateFloodState(dataset, state);
 }
 
 function updateSun() {
@@ -723,7 +756,16 @@ function onChange(key, value) {
       buildScene(); onResize();
       tuneWarmup = 0; tuneSamples = []; tuneWindowStart = performance.now();
       break;
-    case 'waterOffset': needStats = true; hoverMaskOffset = NaN; syncUniforms(); break;
+    case 'waterOffset':
+      needStats = true;
+      hoverMaskOffset = NaN;
+      syncUniforms();
+      if (contextLayers) contextLayers.updateFloodState(dataset, state);
+      break;
+    case 'showBuildings': case 'showRoads': case 'showOsmWater': case 'showPopulation':
+      if (contextLayers) contextLayers.setVisibility(key, value);
+      syncUniforms();
+      break;
     default: syncUniforms();
   }
 }

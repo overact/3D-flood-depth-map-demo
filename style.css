@@ -1163,6 +1163,71 @@ body > canvas {
 }
 
 /* ============================================================================
+   7a. Context-layer legend
+   ----------------------------------------------------------------------------
+   A compact categorical key for the optional map overlays. It intentionally
+   does not reuse the quantitative Blues depth ramp: the overlay colours need
+   to remain identifiable when the flood surface is hidden or re-coloured.
+   ========================================================================== */
+
+.fv-context-legend {
+  width: 178px;
+  padding: var(--fv-space-2) var(--fv-pad-x) var(--fv-space-2);
+}
+
+.fv-context-legend-title {
+  font-size: 11px;
+  font-weight: 620;
+  color: var(--fv-ink);
+}
+
+.fv-context-legend-sub {
+  margin-top: 1px;
+  margin-bottom: var(--fv-space-2);
+  color: var(--fv-ink-faint);
+  font-size: 9px;
+  letter-spacing: var(--fv-track-wide);
+  text-transform: uppercase;
+}
+
+.fv-context-legend-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px 8px;
+}
+
+.fv-context-legend-item {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  color: var(--fv-ink-soft);
+  font-size: 9.5px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.fv-context-legend-item > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fv-context-swatch {
+  flex: 0 0 10px;
+  width: 10px;
+  height: 10px;
+  border: 1px solid rgba(255, 255, 255, .28);
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .18);
+}
+
+.fv-context-swatch--population { background: #d977a8; }
+.fv-context-swatch--buildings { background: #f0b35a; }
+.fv-context-swatch--roads { background: #e5edf3; }
+.fv-context-swatch--water { background: #4fb6c7; }
+
+/* ============================================================================
    8. Stats card
    ========================================================================== */
 
@@ -1934,6 +1999,11 @@ body > canvas {
   .fv-stats .fv-body > .fv-rule { display: none; }
 
   .fv-legend { width: auto; padding: 0 0 var(--fv-space-1); }
+
+  .fv-context-legend {
+    width: auto;
+    padding: 0 0 var(--fv-space-2);
+  }
 
   /* Horizontal ramp: the drawer is wide and short, so the vertical bar would
      waste the width and force the panel taller. The inline --fv-ramp gradient

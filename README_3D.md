@@ -95,6 +95,33 @@ mean/std-matched to the aerial over dry land so the seam is invisible. The Tasma
 handful of pixels outside every source raster are the only synthetic areas; they are a smooth
 push–pull fill and are labelled as such in the UI's "About the data" panel.
 
+### Context layers
+
+The viewer also ships a small, versioned context snapshot in `data/layers/` so GitHub Pages
+does not depend on live third-party requests while the map is being inspected. The optional
+overlays are:
+
+* OSM building footprints, roads and waterways, rebased to the same local EPSG:3857 scene
+  coordinates as the flood rasters.
+* ABS 2021 Census SA1 polygons coloured by people per km² (log-scaled so both rural and town
+  areas remain readable).
+
+Buildings and roads are recoloured from their sampled HOTA depth as the water-level slider
+moves, which makes likely impact areas easy to scan without changing the underlying flood
+model. Use **Controls → Context layers** to toggle each overlay independently. The OSM and ABS
+snapshots are static and bounded to the current demo extent; refresh them with:
+
+```text
+node tools/fetch_context_layers.mjs
+```
+
+The refresh script uses OSM through Overpass and the ABS 2021 General Community Profile SA1
+service. OSM data is © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)
+under the [ODbL](https://opendatacommons.org/licenses/odbl/1-0/); ABS Census data is released
+under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The flood run and imagery are
+from 2021, while OSM is a current map snapshot, so the overlays are geographic context rather
+than proof that a building or road existed unchanged on the flood date.
+
 ---
 
 ## Rendering architecture

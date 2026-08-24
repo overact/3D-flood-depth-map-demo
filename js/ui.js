@@ -4,7 +4,7 @@
  * Owns every piece of DOM chrome that sits on top of the WebGL canvas:
  *
  *   · lil-gui control panel   (folders: water level / light & terrain /
- *                              water material / display)
+ *                              water material / display / context layers)
  *   · a hero "Δ water level" scrubber pinned to the bottom of the viewport
  *   · the Blues depth legend (0 → 2.5 m, exactly the published ramp)
  *   · the flood statistics card
@@ -60,6 +60,10 @@ const STATE_DEFAULTS = {
   foam: 1,
   science: false,
   showWater: true,
+  showBuildings: true,
+  showRoads: true,
+  showOsmWater: false,
+  showPopulation: true,
   autoRotate: false,
   quality: 'high'
 };
@@ -812,7 +816,15 @@ export function createUI(opts = {}) {
     para('Basemap',
       ' — the pixels under the water are real Sentinel-2 imagery from 26 March 2021. ' +
       'Only the ocean and a handful of pixels outside every source raster are a ' +
-      'smooth fill.')
+      'smooth fill.'),
+    para('Context layers',
+      ' — optional buildings, roads and water context are sourced from ' +
+      'OpenStreetMap contributors via the Overpass API; OSM data is provided under ' +
+      'the ODbL.'),
+    para('Population density',
+      ' — the population layer uses Australian Bureau of Statistics (ABS) 2021 ' +
+      'Census General Community Profile data at SA1 level, expressed as people per ' +
+      'km²; it is contextual information, not flood depth.')
   );
 
   // Numeric facts, straight out of meta.json (filled in by applyMeta).
@@ -911,6 +923,33 @@ export function createUI(opts = {}) {
   add(scale, bar, ticks);
   add(legend, scale, legendFoot);
   add(zoneBR, legend);
+
+  /* ---------------- context-layer legend ------------------------------- */
+
+  // This deliberately stays separate from the quantitative depth ramp: these
+  // colours describe optional map overlays, not water depth or flood severity.
+  const contextLegend = h('section', 'fv-panel fv-context-legend');
+  attrs(contextLegend, { 'aria-label': 'Context layer legend' });
+  add(contextLegend,
+    h('div', 'fv-context-legend-title', 'Context layers'),
+    h('div', 'fv-context-legend-sub', 'map overlay colours')
+  );
+  const contextItems = [
+    ['population', 'Population density'],
+    ['buildings', 'Buildings'],
+    ['roads', 'Roads'],
+    ['water', 'Water']
+  ];
+  const contextList = h('div', 'fv-context-legend-list');
+  for (const [kind, label] of contextItems) {
+    const item = h('div', 'fv-context-legend-item');
+    const swatch = h('span', 'fv-context-swatch fv-context-swatch--' + kind);
+    attrs(swatch, { 'aria-hidden': 'true' });
+    add(item, swatch, h('span', null, label));
+    add(contextList, item);
+  }
+  add(contextLegend, contextList);
+  add(zoneBR, contextLegend);
 
   /* ---------------- flood statistics card ---------------- */
 
@@ -1353,6 +1392,13 @@ export function createUI(opts = {}) {
   button(fView, 'Reset view', () => emitAction('resetView'));
   button(fView, 'Screenshot', () => emitAction('screenshot'));
 
+  // --- context layers ---------------------------------------------------
+  const fContext = gui.addFolder('Context layers');
+  bind(fContext, 'showBuildings', 'Buildings');
+  bind(fContext, 'showRoads', 'Roads');
+  bind(fContext, 'showOsmWater', 'OSM water');
+  bind(fContext, 'showPopulation', 'Population density');
+
   // Folders start collapsed per the contract; the water level lives in the
   // always-visible scrubber at the bottom of the screen, so nothing essential
   // is hidden behind a disclosure triangle.
@@ -1360,6 +1406,7 @@ export function createUI(opts = {}) {
   fLight.close();
   fWater.close();
   fView.close();
+  fContext.close();
 
   /* ---------------- state helpers ---------------- */
 
