@@ -204,7 +204,7 @@ let hoverMask = null, hoverMaskTex = null, hoverQueue = null;
 let hoverMaskOffset = NaN, hoverLastSolve = 0, hoverCells = 0;
 const AGENT_REGION_ID = 'kempsey';
 const AGENT_SOURCE_COMMIT = '85d9847d2cf61ff2c6920dbfd2dd1a1aac5aed06';
-const AGENT_SOURCE_SNAPSHOT_ID = 'sha256:c0bc3639c73825885b6a3318a602c60de05cdef9a5b9eee81f14ea57a6bfc999';
+const AGENT_SOURCE_SNAPSHOT_ID = 'sha256:138276c02707be3d1890e401444fe8c7e07df30534c6850fea1b78177bbf89a4';
 const AGENT_DATA_FINGERPRINT = 'kempsey-overview-v4';
 let agentHighlightRegionId = null;
 let agentActionHistory = new Map();
@@ -733,7 +733,7 @@ function solveHoverBody(start) {
  */
 function updateHover(dt) {
   if (!waterMat) return;
-  let want = 0;
+  let want = agentHighlightRegionId && hoverMaskOffset === state.waterOffset && state.showWater ? 1 : 0;
   // Not while a mouse button is down and not during a fly tour: both mean the camera is
   // moving, and a 24-56 ms flood fill dropped into the middle of a drag is precisely the
   // stall that makes the controls feel disconnected from the mouse. Hover is an idle-time
@@ -918,6 +918,8 @@ function setAgentHighlight(region) {
   hoverMaskTex.needsUpdate = true;
   hoverMaskOffset = state.waterOffset;
   hoverActive = true;
+  hoverStrength = 1;
+  waterMat.uniforms.uHoverStrength.value = 1;
   agentHighlightRegionId = region.regionId || agentHighlightRegionId;
   return true;
 }
