@@ -207,6 +207,10 @@ const AGENT_SOURCE_COMMIT = '85d9847d2cf61ff2c6920dbfd2dd1a1aac5aed06';
 const AGENT_SOURCE_SNAPSHOT_ID = 'sha256:138276c02707be3d1890e401444fe8c7e07df30534c6850fea1b78177bbf89a4';
 const AGENT_DATA_FINGERPRINT = 'kempsey-overview-v4';
 let agentHighlightRegionId = null;
+let agentHighlightMode = null;
+let agentHighlightStartedAt = 0;
+let agentHighlightExpiresAt = 0;
+const AGENT_FOCUS_HIGHLIGHT_SECONDS = 3.2;
 let agentActionHistory = new Map();
 let agentSceneRevisionValue = 0;
 let agentViewGenerationValue = null;
@@ -387,7 +391,7 @@ async function init() {
     },
     renderOnce: () => render(),
     get uniforms() { return waterMat ? waterMat.uniforms : null; },
-    get hover() { return { strength: hoverStrength, cells: hoverCells, active: hoverActive }; },
+    get hover() { return { strength: hoverStrength, cells: hoverCells, active: hoverActive, mode: agentHighlightMode, expiresAt: Number.isFinite(agentHighlightExpiresAt) ? agentHighlightExpiresAt : null }; },
     get agentAction() { return getAgentActionState(); },
     applyAgentAction,
     setAgentViewGeneration,
@@ -733,7 +737,21 @@ function solveHoverBody(start) {
  */
 function updateHover(dt) {
   if (!waterMat) return;
-  let want = agentHighlightRegionId && hoverMaskOffset === state.waterOffset && state.showWater ? 1 : 0;
+  let want = 0;
+  if (agentHighlightRegionId && hoverMaskOffset === state.waterOffset && state.showWater) {
+    if (agentHighlightMode === 'pulse') {
+      const now = performance.now() / 1000;
+      if (now >= agentHighlightExpiresAt) {
+        clearAgentHighlight();
+      } else {
+        const age = now - agentHighlightStartedAt;
+        const fade = Math.min(1, Math.max(0, (agentHighlightExpiresAt - now) / 0.55));
+        want = (0.28 + 0.72 * (0.5 + 0.5 * Math.sin(age * Math.PI * 4.4))) * fade;
+      }
+    } else {
+      want = 1;
+    }
+  }
   // Not while a mouse button is down and not during a fly tour: both mean the camera is
   // moving, and a 24-56 ms flood fill dropped into the middle of a drag is precisely the
   // stall that makes the controls feel disconnected from the mouse. Hover is an idle-time
@@ -777,7 +795,7 @@ function onChange(key, value) {
   if (key === 'waterOffset') {
     agentRegionIndexCache.clear();
     agentActionHistory.clear();
-    agentHighlightRegionId = null;
+    clearAgentHighlight();
     agentSceneRevisionReady = false;
   }
   switch (key) {
@@ -899,7 +917,20 @@ function buildAgentRegionIndex(offset) {
   return result;
 }
 
-function setAgentHighlight(region) {
+function clearAgentHighlight() {
+  agentHighlightRegionId = null;
+  agentHighlightMode = null;
+  agentHighlightStartedAt = 0;
+  agentHighlightExpiresAt = 0;
+  if (hoverMask) {
+    hoverMask.fill(0);
+    if (hoverMaskTex) hoverMaskTex.needsUpdate = true;
+  }
+  hoverCells = 0;
+  hoverActive = false;
+}
+
+function setAgentHighlight(region, mode = 'persistent') {
   if (!region || !region.cells || !region.cells.length) return false;
   if (!hoverMask) {
     hoverMask = new Uint8Array(dataset.grid.nx * dataset.grid.ny);
@@ -921,6 +952,9 @@ function setAgentHighlight(region) {
   hoverStrength = 1;
   waterMat.uniforms.uHoverStrength.value = 1;
   agentHighlightRegionId = region.regionId || agentHighlightRegionId;
+  agentHighlightMode = mode === 'pulse' ? 'pulse' : 'persistent';
+  agentHighlightStartedAt = performance.now() / 1000;
+  agentHighlightExpiresAt = agentHighlightMode === 'pulse' ? agentHighlightStartedAt + AGENT_FOCUS_HIGHLIGHT_SECONDS : Infinity;
   return true;
 }
 
@@ -993,9 +1027,10 @@ function applyAgentAction(request) {
   region.regionId = regionId;
   let cameraResult = null;
   if (action.kind === 'highlight_region') {
-    if (!setAgentHighlight(region)) return { ok: false, code: 'highlight_failed', message: 'could not create highlight mask' };
+    if (!setAgentHighlight(region, 'persistent')) return { ok: false, code: 'highlight_failed', message: 'could not create highlight mask' };
   } else {
     cameraResult = focusAgentRegion(region);
+    if (!setAgentHighlight(region, 'pulse')) return { ok: false, code: 'highlight_failed', message: 'could not create temporary focus highlight' };
   }
   render();
   const result = { status: 'applied', actionId: request.actionId, action, regionId, postCamera: cameraResult || { position: camera.position.toArray(), target: controls.target.toArray() }, highlightedCells: hoverCells, sceneRevision: agentSceneRevision(), dataFingerprint: agentDataFingerprint() };
