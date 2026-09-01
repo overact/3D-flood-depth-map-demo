@@ -738,11 +738,13 @@ function solveHoverBody(start) {
 function updateHover(dt) {
   if (!waterMat) return;
   let want = 0;
-  if (agentHighlightRegionId && hoverMaskOffset === state.waterOffset && state.showWater) {
+  let agentHighlightActive = !!(agentHighlightRegionId && hoverMaskOffset === state.waterOffset && state.showWater);
+  if (agentHighlightActive) {
     if (agentHighlightMode === 'pulse') {
       const now = performance.now() / 1000;
       if (now >= agentHighlightExpiresAt) {
-        clearAgentHighlight();
+        clearAgentHighlight(true);
+        agentHighlightActive = false;
       } else {
         const age = now - agentHighlightStartedAt;
         const fade = Math.min(1, Math.max(0, (agentHighlightExpiresAt - now) / 0.55));
@@ -756,7 +758,7 @@ function updateHover(dt) {
   // moving, and a 24-56 ms flood fill dropped into the middle of a drag is precisely the
   // stall that makes the controls feel disconnected from the mouse. Hover is an idle-time
   // affordance, so it only runs when the pointer is idle.
-  if (state.hoverFx && hoverNdc && state.showWater && !pointerStart && !tour) {
+  if (!agentHighlightActive && state.hoverFx && hoverNdc && state.showWater && !pointerStart && !tour) {
     const p = pickSurface(hoverNdc);
     if (p) {
       const { arrays, grid, meta } = dataset;
@@ -917,7 +919,7 @@ function buildAgentRegionIndex(offset) {
   return result;
 }
 
-function clearAgentHighlight() {
+function clearAgentHighlight(clearPointer = false) {
   agentHighlightRegionId = null;
   agentHighlightMode = null;
   agentHighlightStartedAt = 0;
@@ -930,6 +932,7 @@ function clearAgentHighlight() {
   hoverActive = false;
   hoverStrength = 0;
   if (waterMat) waterMat.uniforms.uHoverStrength.value = 0;
+  if (clearPointer) hoverNdc = null;
 }
 
 function setAgentHighlight(region, mode = 'persistent') {
