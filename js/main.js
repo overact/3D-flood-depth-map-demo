@@ -928,6 +928,8 @@ function clearAgentHighlight() {
   }
   hoverCells = 0;
   hoverActive = false;
+  hoverStrength = 0;
+  if (waterMat) waterMat.uniforms.uHoverStrength.value = 0;
 }
 
 function setAgentHighlight(region, mode = 'persistent') {
