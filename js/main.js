@@ -25,6 +25,14 @@ function isWetCell(flag, need, offset) {
   if (flag & 2) return true;
   return Math.abs(offset) < BASELINE_EPSILON ? !!(flag & 1) : offset >= need;
 }
+
+// Agent analysis excludes permanent sea and outside-footprint cells. Keep the
+// presentation renderer's sea behavior separate so region ids match the host's
+// deterministic flood-analysis index exactly.
+function isAgentFloodCell(flag, need, offset) {
+  if (flag & FLAG_OUT || flag & 2) return false;
+  return Math.abs(offset) < BASELINE_EPSILON ? !!(flag & 1) : offset >= need;
+}
 const QUALITY = {
   high:   { stride: 1, water: [896, 832], dpr: 2.0 },
   medium: { stride: 2, water: [640, 594], dpr: 1.5 },
@@ -194,6 +202,16 @@ let hoverNdc = null, hoverActive = false;
 let hoverStrength = 0;
 let hoverMask = null, hoverMaskTex = null, hoverQueue = null;
 let hoverMaskOffset = NaN, hoverLastSolve = 0, hoverCells = 0;
+const AGENT_REGION_ID = 'kempsey';
+const AGENT_SOURCE_COMMIT = '85d9847d2cf61ff2c6920dbfd2dd1a1aac5aed06';
+const AGENT_SOURCE_SNAPSHOT_ID = 'sha256:c0bc3639c73825885b6a3318a602c60de05cdef9a5b9eee81f14ea57a6bfc999';
+const AGENT_DATA_FINGERPRINT = 'kempsey-overview-v4';
+let agentHighlightRegionId = null;
+let agentActionHistory = new Map();
+let agentSceneRevisionValue = 0;
+let agentViewGenerationValue = null;
+let agentViewGenerationReady = false;
+let agentSceneRevisionReady = false;
 
 init().catch((err) => {
   console.error(err);
@@ -267,6 +285,9 @@ async function init() {
   await frame();
 
   buildScene();
+  agentSceneRevisionValue = 0;
+  agentSceneRevisionReady = false;
+  agentRegionIndexCache.clear();
   setStatus('Loading context layers', 0.90);
   try {
     contextLayers = await loadContextLayers({
@@ -367,7 +388,12 @@ async function init() {
     renderOnce: () => render(),
     get uniforms() { return waterMat ? waterMat.uniforms : null; },
     get hover() { return { strength: hoverStrength, cells: hoverCells, active: hoverActive }; },
-    meta: () => dataset.meta,
+    get agentAction() { return getAgentActionState(); },
+    applyAgentAction,
+    setAgentViewGeneration,
+    setAgentSceneRevision,
+    get agentProtocol() { return { region: AGENT_REGION_ID, sourceCommit: AGENT_SOURCE_COMMIT, sourceSnapshotId: AGENT_SOURCE_SNAPSHOT_ID, viewGeneration: agentViewGenerationValue, sceneRevision: agentSceneRevisionValue, dataFingerprint: AGENT_DATA_FINGERPRINT, ready: agentViewGenerationReady && agentSceneRevisionReady }; },
+    meta: () => ({ ...dataset.meta, region: AGENT_REGION_ID, sourceCommit: AGENT_SOURCE_COMMIT, sourceSnapshotId: AGENT_SOURCE_SNAPSHOT_ID, dataFingerprint: AGENT_DATA_FINGERPRINT }),
     camera: () => ({ pos: camera.position.toArray(), target: controls.target.toArray() }),
   };
   setStatus(null);
@@ -748,6 +774,12 @@ function updateHover(dt) {
 
 function onChange(key, value) {
   state[key] = value;
+  if (key === 'waterOffset') {
+    agentRegionIndexCache.clear();
+    agentActionHistory.clear();
+    agentHighlightRegionId = null;
+    agentSceneRevisionReady = false;
+  }
   switch (key) {
     case 'sunAzimuth': case 'sunElevation': updateSun(); break;
     case 'quality':
@@ -807,6 +839,175 @@ function frameToFlood() {
   camera.position.set(c.x - 11000, 17000, c.z + 23000);
   camera.lookAt(c);
   if (controls) { controls.target.copy(c); controls.update(); }
+}
+
+function regionLabelFromId(regionId) {
+  if (typeof regionId !== 'string' || !regionId.startsWith('kempsey-dz')) return null;
+  const match = /-r(\d+)$/.exec(regionId);
+  return match ? Number(match[1]) : null;
+}
+
+function regionBoundsForId(regionId) {
+  const label = regionLabelFromId(regionId);
+  if (!regionId.includes(`-dz${(Math.round(state.waterOffset * 100) / 100).toFixed(2).replace('-', 'm').replace('.', 'p')}-`)) return null;
+  if (!Number.isSafeInteger(label) || label <= 0) return null;
+  const index = buildAgentRegionIndex(state.waterOffset);
+  if (!index) return null;
+  const region = index.regions.find((item) => item.label === label);
+  if (!region) return null;
+  return region;
+}
+
+const agentRegionIndexCache = new Map();
+
+function buildAgentRegionIndex(offset) {
+  const cacheKey = `${AGENT_DATA_FINGERPRINT}:${Number(offset).toFixed(4)}`;
+  if (agentRegionIndexCache.has(cacheKey)) return agentRegionIndexCache.get(cacheKey);
+  const { arrays, grid, meta } = dataset;
+  const { nx, ny } = grid;
+  const labels = new Int32Array(nx * ny);
+  const queue = new Int32Array(nx * ny);
+  const regions = [];
+  const wet = (i) => isAgentFloodCell(arrays.flags[i], arrays.need[i], offset);
+  for (let iz = 0; iz < ny; iz++) {
+    for (let ix = 0; ix < nx; ix++) {
+      const start = iz * nx + ix;
+      if (labels[start] || !wet(start)) continue;
+      const label = regions.length + 1;
+      let head = 0, tail = 0;
+      queue[tail++] = start;
+      labels[start] = label;
+      const region = { label, cells: [], minX: Infinity, minZ: Infinity, maxX: -Infinity, maxZ: -Infinity };
+      while (head < tail) {
+        const i = queue[head++];
+        const x = i % nx, z = Math.floor(i / nx);
+        region.cells.push(i);
+        const px = ((x + 0.5) / nx - 0.5) * grid.EW;
+        const pz = ((z + 0.5) / ny - 0.5) * grid.EH;
+        region.minX = Math.min(region.minX, px); region.maxX = Math.max(region.maxX, px);
+        region.minZ = Math.min(region.minZ, pz); region.maxZ = Math.max(region.maxZ, pz);
+        if (x > 0 && !labels[i - 1] && wet(i - 1)) { labels[i - 1] = label; queue[tail++] = i - 1; }
+        if (x + 1 < nx && !labels[i + 1] && wet(i + 1)) { labels[i + 1] = label; queue[tail++] = i + 1; }
+        if (z > 0 && !labels[i - nx] && wet(i - nx)) { labels[i - nx] = label; queue[tail++] = i - nx; }
+        if (z + 1 < ny && !labels[i + nx] && wet(i + nx)) { labels[i + nx] = label; queue[tail++] = i + nx; }
+      }
+      regions.push(region);
+    }
+  }
+  const result = { labels, regions };
+  agentRegionIndexCache.set(cacheKey, result);
+  return result;
+}
+
+function setAgentHighlight(region) {
+  if (!region || !region.cells || !region.cells.length) return false;
+  if (!hoverMask) {
+    hoverMask = new Uint8Array(dataset.grid.nx * dataset.grid.ny);
+    hoverQueue = new Int32Array(dataset.grid.nx * dataset.grid.ny);
+  } else hoverMask.fill(0);
+  for (const index of region.cells) hoverMask[index] = 255;
+  hoverCells = region.cells.length;
+  if (!hoverMaskTex) {
+    hoverMaskTex = new THREE.DataTexture(hoverMask, dataset.grid.nx, dataset.grid.ny, THREE.RedFormat, THREE.UnsignedByteType);
+    hoverMaskTex.magFilter = THREE.LinearFilter;
+    hoverMaskTex.minFilter = THREE.LinearFilter;
+    hoverMaskTex.wrapS = hoverMaskTex.wrapT = THREE.ClampToEdgeWrapping;
+    hoverMaskTex.generateMipmaps = false;
+    waterMat.uniforms.tHoverMask.value = hoverMaskTex;
+  }
+  hoverMaskTex.needsUpdate = true;
+  hoverMaskOffset = state.waterOffset;
+  hoverActive = true;
+  agentHighlightRegionId = region.regionId || agentHighlightRegionId;
+  return true;
+}
+
+function getAgentActionState() {
+  const entries = [...agentActionHistory.values()];
+  return entries.length ? entries[entries.length - 1] : null;
+}
+
+function setAgentViewGeneration(value) {
+  if (!Number.isSafeInteger(value) || value <= 0) return false;
+  if (agentViewGenerationReady && value < agentViewGenerationValue) return false;
+  if (value > agentViewGenerationValue) {
+    agentSceneRevisionValue = 0;
+    agentSceneRevisionReady = false;
+    agentActionHistory.clear();
+  }
+  agentViewGenerationValue = value;
+  agentViewGenerationReady = true;
+  return true;
+}
+
+function setAgentSceneRevision(value) {
+  if (!Number.isSafeInteger(value) || value < 0) return false;
+  if (agentSceneRevisionReady && value < agentSceneRevisionValue) return false;
+  agentSceneRevisionValue = value;
+  agentSceneRevisionReady = true;
+  return true;
+}
+
+function focusAgentRegion(region) {
+  const centerX = (region.minX + region.maxX) * 0.5;
+  const centerZ = (region.minZ + region.maxZ) * 0.5;
+  const span = Math.max(region.maxX - region.minX, region.maxZ - region.minZ, 500);
+  const distance = Math.min(120000, Math.max(300, span / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) * 1.45));
+  const azimuth = new THREE.Vector3().subVectors(camera.position, controls.target);
+  azimuth.y = 0;
+  if (azimuth.lengthSq() < 1) azimuth.set(-1, 0, 1);
+  azimuth.normalize();
+  const target = new THREE.Vector3(centerX, 0, centerZ);
+  const position = target.clone().add(azimuth.multiplyScalar(distance));
+  position.y = Math.max(distance * 0.72, 900);
+  camera.position.copy(position);
+  camera.lookAt(target);
+  controls.target.copy(target);
+  controls.update();
+  return { position: camera.position.toArray(), target: controls.target.toArray() };
+}
+
+function applyAgentAction(request) {
+  const action = request && request.action;
+  const regionId = action && action.regionId;
+  const expectedRevision = request && request.expectedSceneRevision;
+  if (!request || typeof request.actionId !== 'string' || request.actionId.length === 0 || request.actionId.length > 128 || !action || typeof action.kind !== 'string' || typeof regionId !== 'string' || regionId.length === 0 || regionId.length > 256) return { ok: false, code: 'bad_action', message: 'action envelope is invalid' };
+  if (!agentViewGenerationReady || !agentSceneRevisionReady) return { ok: false, code: 'viewer_protocol_not_ready', message: 'viewer action protocol handshake is incomplete' };
+  if (request.viewGeneration !== agentViewGenerationValue) return { ok: false, code: 'stale_view_generation', message: 'viewer generation no longer matches' };
+  if (request.sourceCommit !== undefined && request.sourceCommit !== AGENT_SOURCE_COMMIT) return { ok: false, code: 'stale_data', message: 'source commit no longer matches' };
+  if (request.sourceSnapshotId !== undefined && request.sourceSnapshotId !== AGENT_SOURCE_SNAPSHOT_ID) return { ok: false, code: 'stale_data', message: 'source snapshot no longer matches' };
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision !== agentSceneRevision()) return { ok: false, code: 'stale_scene', message: 'scene revision no longer matches' };
+  const expectedFingerprint = request.expectedDataFingerprint;
+  if (typeof expectedFingerprint !== 'string' || expectedFingerprint.length === 0 || expectedFingerprint !== agentDataFingerprint()) return { ok: false, code: 'stale_data', message: 'data fingerprint no longer matches' };
+  const fingerprint = JSON.stringify({ actionId: request.actionId, action, expectedRevision, expectedFingerprint });
+  const previous = agentActionHistory.get(request.actionId);
+  if (previous) {
+    if (previous.fingerprint !== fingerprint) return { ok: false, code: 'action_id_reuse', message: 'actionId was reused with different parameters' };
+    return { ok: true, value: previous.result };
+  }
+  if (action.kind !== 'focus_region' && action.kind !== 'highlight_region') return { ok: false, code: 'unsupported_action', message: 'unsupported viewer action' };
+  const region = regionBoundsForId(regionId);
+  if (!region) return { ok: false, code: 'unknown_region', message: 'regionId is not present at the current water level' };
+  region.regionId = regionId;
+  let cameraResult = null;
+  if (action.kind === 'highlight_region') {
+    if (!setAgentHighlight(region)) return { ok: false, code: 'highlight_failed', message: 'could not create highlight mask' };
+  } else {
+    cameraResult = focusAgentRegion(region);
+  }
+  render();
+  const result = { status: 'applied', actionId: request.actionId, action, regionId, postCamera: cameraResult || { position: camera.position.toArray(), target: controls.target.toArray() }, highlightedCells: hoverCells, sceneRevision: agentSceneRevision(), dataFingerprint: agentDataFingerprint() };
+  agentActionHistory.set(request.actionId, { fingerprint, result });
+  while (agentActionHistory.size > 32) agentActionHistory.delete(agentActionHistory.keys().next().value);
+  return { ok: true, value: result };
+}
+
+function agentSceneRevision() {
+  return agentSceneRevisionValue;
+}
+
+function agentDataFingerprint() {
+  return AGENT_DATA_FINGERPRINT;
 }
 
 function topView() {
