@@ -123,7 +123,7 @@ model. Buildings also have a batched roof/base/corner outline for a stronger sil
 context renderer uses a distance-based LOD: close views use metric building solids and road
 ribbons, while wide views swap to screen-space building markers and a sampled road skeleton so
 small features do not disappear below a pixel. Use **Controls → Context layers** to toggle each
-overlay independently. The OSM and ABS snapshots are static and bounded to the current demo
+overlay independently. The context snapshots are static and bounded to the current demo
 extent; refresh them with:
 
 ```text
@@ -132,8 +132,9 @@ node tools/fetch_context_layers.mjs
 
 The roads/water refresh script uses OSM through Overpass. Each snapshot records the OSM base
 timestamp, endpoint and query bbox in `roads.json`, `water.json` and `manifest.json`. It
-preserves an existing GlobalBuildingAtlas snapshot and population snapshot unless an explicit
-replacement flag is given. The road snapshot keeps OSM `width`, `lanes`, `surface`, `bridge`,
+preserves an existing GlobalBuildingAtlas snapshot unless explicitly replaced, and always
+preserves the active population payload and its manifest metadata. If population is missing,
+it stops before downloading or writing anything; run the WorldPop helper first. The road snapshot keeps OSM `width`, `lanes`, `surface`, `bridge`,
 `tunnel` and `layer` tags; tagged widths/lanes drive the display where available, while unpaved
 surfaces receive a separate cartographic colour. `bridge=yes` is raised by a small display-only
 offset because OSM does not provide a surveyed bridge deck elevation in this snapshot.
@@ -165,9 +166,9 @@ Run `python tests/test_worldpop.py` and `node tests/population.test.mjs` to chec
 masking, count conservation, clipped edges, grid decoding, and colour scale. The
 browser-depth regression also checks the WorldPop overlay and desktop/mobile legend.
 
-The previous ABS Mesh Block snapshot and its acquisition script are retained as
-historical comparators; WorldPop is the active population source.
-For the legacy SA1 layer, use `node tools/fetch_context_layers.mjs --refresh-sa1-population`.
+The superseded ABS SA1 and Mesh Block files and acquisition paths were removed.
+They remain recoverable from Git history at `dce51f2`; WorldPop is the sole shipped
+population source. The context refresh script does not fall back to ABS.
 To deliberately replace the GBA building snapshot with OSM-estimated buildings, use
 `node tools/fetch_context_layers.mjs --refresh-osm-buildings`.
 To refresh buildings from the official release, download the matching
@@ -181,10 +182,6 @@ WorldPop: [official catalog](https://hub.worldpop.org/geodata/listing?id=135),
 [2021 Australia files](https://data.worldpop.org/GIS/Population/Global_2015_2030/R2025A/2021/AUS/v1/100m/constrained/),
 DOI [10.5258/SOTON/WP00839](https://doi.org/10.5258/SOTON/WP00839),
 WorldPop / University of Southampton, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
-The historical ABS comparator uses
-[ASGS2021 MB boundaries](https://geo.abs.gov.au/arcgis/rest/services/ASGS2021/MB/MapServer)
-and [Census Mesh Block Counts, 2021](https://www.abs.gov.au/census/guide-census-data/mesh-block-counts/2021),
-also CC BY 4.0.
 GBA.LoD1 is [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/), and the
 GBA.ODbLPolygon footprint component is [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/).
 OSM roads/water are © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)
@@ -389,3 +386,35 @@ Khan & Zheng, in *Pattern Recognition and Computer Vision* (ACPR 2025), Springer
 The terrain is the [Geoscience Australia 5 m LiDAR DEM](https://www.ga.gov.au/scientific-topics/national-location-information/digital-elevation-data)
 (AHD). Imagery is [Copernicus Sentinel-2](https://sentinels.copernicus.eu/sentinel-data-access/sentinel-products/sentinel-2-data-products),
 26 March 2021.
+
+## Loading footprint and retired data
+
+Measured with fresh desktop (1440 × 900) and mobile (390 × 844) Chrome contexts
+on 2026-09-08, through initial scene and context-layer readiness. Values below
+sum the uncompressed files actually requested from the local static server;
+they exclude online map tiles, HTTP headers and the tiny HTML entry point.
+Production transfer sizes depend on HTTP compression and browser caching.
+
+| Requested assets | Desktop | Mobile |
+| --- | ---: | ---: |
+| Scene rasters, imagery and context data | 15.96 MB | 14.13 MB |
+| Cesium runtime and requested support assets | 6.42 MB | 6.42 MB |
+| Three.js and application code/styles | 2.50 MB | 2.50 MB |
+| Total, excluding dynamic tiles | 24.88 MB | 23.05 MB |
+
+The largest scene payload is `buildings.json` (6.72 MB), followed by terrain
+(2.66 MB), desktop imagery (2.59 MB) and the connectivity raster (1.99 MB).
+WorldPop is 0.72 MB. Context layers currently load on startup, including hidden
+population geometry. Global OSM tiles load by visible LOD; they are not a
+bundled global dataset. Automated measurements use local tile fixtures.
+
+The cleanup removes 466,863 bytes of superseded ABS SA1 / Mesh Block JSON and
+retires their acquisition paths. Those files were already absent from browser
+requests, so deletion reduces the published tree, not initial transfer. The
+history at `dce51f2` retains the historical comparison data. Both imagery sizes
+and WebP fallback files remain active loader candidates; they are not obsolete.
+
+`node tests/context-refresh.test.mjs` checks that an OSM refresh preserves the
+active population payload and provenance, stops without writes when it is
+missing, and rejects the retired SA1 refresh option. Tests use isolated temporary
+snapshots and mocked network responses.

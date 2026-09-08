@@ -1,14 +1,15 @@
 /**
  * Download and normalize the context layers used by the static viewer.
  *
- * The browser deliberately does not call Overpass or the ABS service at runtime.
+ * The browser deliberately does not call Overpass at runtime.
  * Run this script when refreshing the data snapshot:
  *
  *   node tools/fetch_context_layers.mjs
  *
  * By default an existing GlobalBuildingAtlas snapshot is preserved and the
- * existing population snapshot is preserved. Use --refresh-osm-buildings or
- * --refresh-sa1-population only when deliberately replacing those layers.
+ * active population snapshot is required and preserved without changes. Refresh
+ * population separately with tools/fetch_worldpop_population.py. Use
+ * --refresh-osm-buildings only when deliberately replacing the building layer.
  *
  * Output is intentionally small, local-coordinate JSON so the GitHub Pages build
  * stays dependency-free and the renderer can batch every layer into one geometry.
@@ -24,8 +25,6 @@ const R_EARTH = 6378137;
 
 const meta = JSON.parse(await readFile(path.join(ROOT, 'data3d', 'meta.json'), 'utf8'));
 const extent = meta.extent;
-const mercatorAreaFactor = Number(meta.stats?.mercatorAreaFactor) ||
-  Math.cos((Number(extent.latCentre) || 0) * Math.PI / 180) ** 2;
 const bbox = {
   west: extent.left / R_EARTH * 180 / Math.PI,
   east: extent.right / R_EARTH * 180 / Math.PI,
@@ -36,7 +35,9 @@ const bbox = {
 const bboxText = `${bbox.south},${bbox.west},${bbox.north},${bbox.east}`;
 const generatedAt = new Date().toISOString();
 const args = new Set(process.argv.slice(2));
-const refreshSa1Population = args.has('--refresh-sa1-population');
+for (const arg of args) {
+  if (arg !== '--refresh-osm-buildings') throw new Error(`Unsupported option: ${arg}. Refresh population with tools/fetch_worldpop_population.py.`);
+}
 const refreshOsmBuildings = args.has('--refresh-osm-buildings');
 const overpassInfo = {};
 
@@ -50,11 +51,15 @@ async function readJsonIfExists(file) {
 
 const existingManifest = await readJsonIfExists(path.join(OUT, 'manifest.json'));
 const existingBuildingsSnapshot = await readJsonIfExists(path.join(OUT, 'buildings.json'));
-const existingPopulationFile = existingManifest?.layers?.population?.file || 'population_sa1.json';
-const existingPopulationSnapshot = await readJsonIfExists(path.join(OUT, existingPopulationFile));
+const populationLayer = existingManifest?.layers?.population;
+const existingPopulationSnapshot = populationLayer?.file
+  ? await readJsonIfExists(path.join(OUT, populationLayer.file))
+  : null;
+if (!existingPopulationSnapshot) {
+  throw new Error('Active population snapshot is missing or invalid. Run python tools/fetch_worldpop_population.py before refreshing context layers.');
+}
 const preserveGbaBuildings = !refreshOsmBuildings &&
   String(existingBuildingsSnapshot?.source || '').includes('GlobalBuildingAtlas');
-const shouldFetchSa1Population = refreshSa1Population || !existingPopulationSnapshot;
 // ArcGIS/Overpass return complete features that intersect the request bbox. Clip
 // their local geometry back to the exact raster rectangle so every context layer
 // shares the same drawable extent as the flood scene.
@@ -287,90 +292,13 @@ async function overpass(query, label) {
   throw lastError || new Error(`${label}: no Overpass endpoint succeeded`);
 }
 
-function polygonArea(ring) {
-  let a = 0;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    a += ring[j][0] * ring[i][1] - ring[i][0] * ring[j][1];
-  }
-  return Math.abs(a) * 0.5;
-}
-
-function populationDensity(features) {
-  const output = [];
-  for (const feature of features) {
-    const p = feature.properties || {};
-    const geometry = feature.geometry;
-    if (!geometry?.coordinates) continue;
-    const polygons = geometry.type === 'MultiPolygon'
-      ? geometry.coordinates
-      : [geometry.coordinates];
-    const localPolygons = polygons.map((polygon) => polygon.map((ring) =>
-      simplify(ring.map(([x, y]) => [round(x - extent.cx), round(extent.cy - y)]), 10, true)));
-    const projectedAreaM2 = Math.max(1, localPolygons.reduce((sum, rings) => {
-      if (!rings.length) return sum;
-      return sum + polygonArea(rings[0]) - rings.slice(1).reduce((s, ring) => s + polygonArea(ring), 0);
-    }, 0));
-    // SA1 geometry is returned in Web Mercator. Convert projected area back to
-    // approximate ground area using the same factor used by the flood stats.
-    const areaM2 = projectedAreaM2 * mercatorAreaFactor;
-    const population = Number(p.Tot_P_P) || 0;
-    const density = round(population / (areaM2 / 1e6), 1);
-    let part = 0;
-    for (const rings of localPolygons) {
-      const outer = clipRing(rings[0] || []);
-      if (outer.length < 4) continue;
-      const holes = rings.slice(1).map(clipRing).filter((ring) => ring.length >= 4);
-      output.push({
-        id: String(p.SA1_CODE_2021 || feature.id || '') + (part ? `:${part}` : ''),
-        sourceId: String(p.SA1_CODE_2021 || feature.id || ''),
-        partIndex: part,
-        population: part === 0 ? population : 0,
-        density,
-        areaKm2: part === 0 ? round(areaM2 / 1e6, 3) : 0,
-        rings: [outer, ...holes],
-      });
-      part++;
-    }
-  }
-  return output;
-}
-
-async function fetchAbsPopulation() {
-  const query = new URLSearchParams({
-    where: '1=1',
-    geometry: `${bbox.west},${bbox.south},${bbox.east},${bbox.north}`,
-    geometryType: 'esriGeometryEnvelope',
-    inSR: '4326',
-    spatialRel: 'esriSpatialRelIntersects',
-    outFields: '*',
-    returnGeometry: 'true',
-    outSR: '3857',
-    maxAllowableOffset: '10',
-    geometryPrecision: '1',
-    resultRecordCount: '2000',
-    returnExceededLimitFeatures: 'true',
-    f: 'geojson',
-  });
-  const url = 'https://services1.arcgis.com/vHnIGBHHqDR6y0CR/arcgis/rest/services/'
-    + '2021_ABS_General_Community_Profile/FeatureServer/6/query?' + query;
-  const response = await fetch(url, { headers: { 'user-agent': '3D-flood-depth-map-demo/1.0 context-layer-snapshot' } });
-  if (!response.ok) throw new Error(`ABS population query: ${response.status} ${response.statusText}`);
-  const json = await response.json();
-  if (json.error) throw new Error(`ABS population query: ${JSON.stringify(json.error)}`);
-  const features = populationDensity(json.features || []);
-  console.log(`population: ${features.length} ABS 2021 SA1 polygons`);
-  return features;
-}
-
 const buildingElements = preserveGbaBuildings ? [] : await overpass(
   `[out:json][timeout:180];way["building"](${bboxText});out tags geom;`, 'buildings');
 const roadElements = await overpass(
   `[out:json][timeout:180];way[highway](${bboxText});out tags geom;`, 'roads');
 const waterElements = await overpass(
   `[out:json][timeout:180];(way["natural"="water"](${bboxText});way[waterway](${bboxText}););out tags geom;`, 'water');
-const populationFeatures = shouldFetchSa1Population
-  ? await fetchAbsPopulation()
-  : existingPopulationSnapshot.features || existingPopulationSnapshot.cells || [];
+const populationFeatures = existingPopulationSnapshot.features || existingPopulationSnapshot.cells || [];
 
 const osmBuildings = buildingElements.map((e) => {
   const ring = clipRing(elementLine(e, 0.5, true));
@@ -464,19 +392,6 @@ await writeJson('water.json', {
   polygons: waterPolygons,
   lines: waterLines,
 });
-if (shouldFetchSa1Population) {
-  await writeJson('population_sa1.json', {
-    version: 1,
-    generatedAt,
-    source: 'Australian Bureau of Statistics, 2021 Census General Community Profile, SA1',
-    bbox,
-    year: 2021,
-    value: 'Total population / polygon area (people per km²)',
-    areaCorrection: mercatorAreaFactor,
-    areaMethod: 'EPSG:3857 polygon area × meta.stats.mercatorAreaFactor',
-    features: populationFeatures,
-  });
-}
 const buildingLayer = preserveGbaBuildings
   ? { ...(existingManifest?.layers?.buildings || {}), file: 'buildings.json', count: buildings.length }
   : {
@@ -488,24 +403,6 @@ const buildingLayer = preserveGbaBuildings
         return summary;
       }, {}),
     };
-const populationLayer = shouldFetchSa1Population
-  ? { file: 'population_sa1.json', count: populationFeatures.length, source: 'ABS 2021 Census SA1' }
-  : {
-      ...(existingManifest?.layers?.population || {}),
-      file: existingPopulationFile,
-      count: populationFeatures.length,
-      source: existingPopulationSnapshot?.source || existingManifest?.layers?.population?.source || 'ABS population snapshot',
-      year: existingPopulationSnapshot?.year,
-      geography: existingPopulationSnapshot?.geography,
-      populationField: existingPopulationSnapshot?.populationField,
-      dwellingField: existingPopulationSnapshot?.dwellingField,
-      boundarySource: existingPopulationSnapshot?.boundarySource,
-      countSource: existingPopulationSnapshot?.countSource,
-    };
-const populationAttribution = shouldFetchSa1Population
-  ? 'Australian Bureau of Statistics, 2021 Census General Community Profile (CC BY 4.0)'
-  : existingPopulationSnapshot?.attribution
-    || 'Australian Bureau of Statistics, 2021 Census Mesh Block Counts + ASGS 2021 Mesh Block boundaries (CC BY 4.0)';
 await writeJson('manifest.json', {
   version: 1,
   generatedAt,
@@ -529,11 +426,10 @@ await writeJson('manifest.json', {
     population: populationLayer,
   },
   attribution: [
-    ...(existingManifest?.attribution || []).filter((value) =>
-      !String(value).startsWith('Australian Bureau of Statistics, 2021 Census')),
+    ...(existingManifest?.attribution || []),
     '© OpenStreetMap contributors, ODbL 1.0',
-    populationAttribution,
-  ].filter((value, index, values) => values.indexOf(value) === index),
+    existingPopulationSnapshot.attribution,
+  ].filter((value, index, values) => value && values.indexOf(value) === index),
 });
 
 console.log(`Wrote context layers to ${OUT}`);
