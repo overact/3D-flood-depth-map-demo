@@ -3,6 +3,7 @@ import json
 import sys
 from pathlib import Path
 from playwright.sync_api import sync_playwright
+from browser_tiles import mock_global_tiles
 
 base = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:18764"
 out = Path(__file__).resolve().parents[1] / "output/basemap-regression"
@@ -25,6 +26,7 @@ ALIGNMENT = """async () => {
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True, channel="chrome")
     page = browser.new_page(viewport={"width": 1440, "height": 900})
+    mock_global_tiles(page)
     errors, requests = [], []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.on("request", lambda r: requests.append(r.url))
@@ -34,6 +36,10 @@ with sync_playwright() as p:
     assert page.locator("canvas").count() == 2
     assert page.evaluate("__fv.basemap.debug.terrainProvider") == "ellipsoid-flat"
     assert page.evaluate("__fv.basemap.debug.mode") == 1
+    budget = page.evaluate("__fv.basemap.debug")
+    assert budget["maximumLevel"] == 18 and budget["minimumLevel"] == 0
+    assert budget["tileCacheSize"] == 48 and budget["maximumRequestsPerServer"] == 6
+    assert not budget["preloadAncestors"] and not budget["preloadSiblings"]
     assert not any("api.cesium.com" in u or "/terrain/" in u for u in requests), requests
     before = page.evaluate(ALIGNMENT)
     assert max(before) < 0.1, before
@@ -49,6 +55,13 @@ with sync_playwright() as p:
     assert max(moved) < 0.1, moved
     assert page.evaluate("__fv.basemap.debug.cameraUpdates") > 2
 
+    page.get_by_role("button", name="World", exact=True).click()
+    page.wait_for_function("__fv.renderBudget.localSceneVisible === false")
+    frames = page.evaluate("__fv.renderBudget.localRenderFrames")
+    page.wait_for_timeout(300)
+    assert page.evaluate("__fv.renderBudget.localRenderFrames") == frames, "World view still renders local flood meshes"
+    page.screenshot(path=str(out / "world-overview.png"))
+    assert page.get_by_role("button", name="Kempsey · flood scene", exact=True).is_visible()
     page.get_by_role("button", name="Australia", exact=True).click()
     page.wait_for_timeout(1200)
     assert page.get_by_role("button", name="Kempsey · flood scene", exact=True).is_visible()
@@ -60,6 +73,7 @@ with sync_playwright() as p:
     assert exported.stat().st_size > 100000, "Composite export omitted map imagery"
 
     page.get_by_role("button", name="Kempsey · flood scene", exact=True).click()
+    page.wait_for_function("__fv.renderBudget.localSceneVisible === true")
     page.get_by_role("button", name="Basemap", exact=True).click()
     assert not page.evaluate("__fv.basemap.active")
     count = page.evaluate("__fv.basemap.debug.renderedFrames")
@@ -81,7 +95,7 @@ with sync_playwright() as p:
     failed = browser.new_page(viewport={"width": 1280, "height": 800})
     failure_errors = []
     failed.on("pageerror", lambda e: failure_errors.append(str(e)))
-    failed.route("https://services.ga.gov.au/**", lambda route: route.abort())
+    failed.route("https://tile.openstreetmap.org/**", lambda route: route.abort())
     failed.goto(base + "/?quality=low&autoRotate=false", wait_until="domcontentloaded")
     failed.wait_for_function("window.__fv?.basemap?.debug.tileError === true", timeout=60000)
     assert "unavailable" in failed.locator(".fv-map-status").inner_text()
@@ -95,7 +109,10 @@ with sync_playwright() as p:
     result = {"initialPixelErrors": before, "movedPixelErrors": moved,
               "mobilePixelErrors": mobile, "compositeExportBytes": exported.stat().st_size,
               "basemap": page.evaluate("__fv.basemap.debug"),
-              "externalTileRequests": sum("services.ga.gov.au" in u for u in requests),
+              "mockedTiles": True,
+              "requestedLevels": sorted(set(int(u.split("/")[-3]) for u in requests if "tile.openstreetmap.org" in u)),
+              "requestedTileCount": sum("tile.openstreetmap.org" in u for u in requests),
+              "worldViewPausesLocalRendering": True,
               "pageErrors": errors, "remoteFailurePreservesFloodScene": True}
     (out / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2), flush=True)

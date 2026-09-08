@@ -18,7 +18,7 @@ import { loadContextLayers } from './context-layers.js';
 import { createUI } from './ui.js';
 import { isWetCell, queryFloodDepth } from './flood-depth.js';
 import { createBasemap } from './basemap.js';
-import { AUSTRALIA_BOUNDS, mercator } from './basemap-transform.js';
+import { AUSTRALIA_BOUNDS, WORLD_BOUNDS, mercator } from './basemap-transform.js';
 
 const WATER_LAYER = 1;
 
@@ -168,8 +168,8 @@ const COARSE_POINTER = typeof matchMedia === 'function' && matchMedia('(pointer:
 
 const state = {
   waterOffset: 0,
-  // Eight times keeps the broad floodplain legible while NoData boundary walls stay disabled.
-  vertExag: 8,
+  // Display-only height scale, doubled from 8x at the user's request.
+  vertExag: 16,
   sunAzimuth: 138,
   sunElevation: 34,
   waveAmp: 1,
@@ -190,6 +190,10 @@ const state = {
 let renderer, scene, camera, controls, ui, dataset, contextLayers;
 let basemap = null, basemapLoading = null;
 let locatorCentre = null;
+let localSceneVisible = true, localCanvasCleared = false, localRenderFrames = 0;
+const localBounds = new THREE.Box3();
+const viewFrustum = new THREE.Frustum();
+const viewProjection = new THREE.Matrix4();
 let sceneRT, blitScene, blitCam, blitMat;
 let sky, sun = new THREE.Vector3(), sunLight, hemiLight, envCubeRT, envCubeCam, envScene;
 let terrainGroup, terrainMesh, waterMesh, waterMat;
@@ -343,7 +347,7 @@ async function init() {
   };
   controls.maxPolarAngle = Math.PI * 0.495;
   controls.minDistance = 300;
-  controls.maxDistance = 12000000;
+  controls.maxDistance = 200000000;
   controls.zoomSpeed = 0.9;
   controls.addEventListener('start', () => { tour = null; });
   // After the controls exist, not before: frameToFlood() sets controls.target, and calling
@@ -386,6 +390,7 @@ async function init() {
     get dataset() { return dataset; },
     get contextLayers() { return contextLayers; },
     get basemap() { return basemap; },
+    get renderBudget() { return { localSceneVisible, localRenderFrames }; },
     pickSurface: (x, y) => pickSurface(new THREE.Vector2(x, y)),
     solveHoverBody: (i) => solveHoverBody(i),
     get hoverCells() { return hoverCells; },
@@ -441,7 +446,7 @@ async function init() {
 
 function ensureBasemap() {
   if (basemap || basemapLoading) return basemapLoading;
-  ui.setBasemapStatus('Loading Australia basemap…', 'loading');
+  ui.setBasemapStatus('Loading global basemap…', 'loading');
   basemapLoading = createBasemap({ meta: dataset.meta, onStatus: ui.setBasemapStatus })
     .then(value => {
       basemap = value;
@@ -654,10 +659,9 @@ function animate() {
     controls.autoRotateSpeed = 0.35;
     controls.update();
   }
-  if (contextLayers && controls) contextLayers.updateCamera(camera, controls.target);
+  if (contextLayers && controls && localSceneVisible) contextLayers.updateCamera(camera, controls.target);
   if (waterMat) waterMat.uniforms.uTime.value = t;
-  updateHover(dt);
-  autoTune(raw);
+  if (localSceneVisible) { updateHover(dt); autoTune(raw); }
   if (needStats) {
     statsTimer += dt;
     if (statsTimer > 0.12) { needStats = false; statsTimer = 0; updateStats(); }
@@ -666,6 +670,13 @@ function animate() {
 }
 
 function render() {
+  // Preserve close-up depth precision while permitting a whole-world view.
+  const distance = camera.position.distanceTo(controls.target);
+  const near = Math.max(20, distance / 100000), far = Math.max(400000, distance * 8);
+  if (camera.near !== near || camera.far !== far) {
+    camera.near = near; camera.far = far; camera.updateProjectionMatrix();
+  }
+  camera.updateMatrixWorld();
   const mapVisible = !!(basemap && basemap.active && state.showBasemap);
   if (basemap && mapVisible) { basemap.sync(camera); basemap.render(); }
   let locator = null;
@@ -676,6 +687,20 @@ function render() {
     }
   }
   ui.setSceneLocator(locator);
+  localSceneVisible = !mapVisible || isLocalSceneVisible();
+  if (!localSceneVisible) {
+    // At world scale or outside Kempsey the local scene adds no useful pixels.
+    // Clear once, then leave this canvas untouched while Cesium navigates.
+    if (!localCanvasCleared) {
+      renderer.setRenderTarget(null);
+      renderer.setClearColor(0x000000, 0);
+      renderer.clear();
+      localCanvasCleared = true;
+    }
+    return;
+  }
+  localCanvasCleared = false;
+  localRenderFrames++;
   sky.visible = !mapVisible;
   renderer.setClearColor(0x000000, mapVisible ? 0 : 1);
   // Slider events can arrive several times before a frame. Only the latest
@@ -707,6 +732,18 @@ function render() {
     renderer.autoClear = true;
   }
   camera.layers.enableAll();
+}
+
+function isLocalSceneVisible() {
+  const { grid, meta } = dataset;
+  localBounds.min.set(-grid.EW / 2, (meta.elev.min - 10) * state.vertExag, -grid.EH / 2);
+  localBounds.max.set(grid.EW / 2, (meta.elev.max + 100) * state.vertExag, grid.EH / 2);
+  viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  viewFrustum.setFromProjectionMatrix(viewProjection);
+  const range = Math.max(1, camera.position.distanceTo(locatorCentre));
+  const pixels = Math.max(grid.EW, grid.EH) * innerHeight
+    / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * range);
+  return pixels >= 8 && viewFrustum.intersectsBox(localBounds);
 }
 
 /**
@@ -846,7 +883,7 @@ function onChange(key, value) {
   }
   switch (key) {
     case 'showBasemap':
-      ui.setBasemapStatus(value ? 'Australia basemap' : 'Basemap off');
+      ui.setBasemapStatus(value ? 'Global basemap' : 'Basemap off');
       if (basemap) basemap.setVisible(!!value);
       else if (value) ensureBasemap();
       ui.refresh();
@@ -878,7 +915,8 @@ function onChange(key, value) {
 function onAction(name) {
   switch (name) {
     case 'clearQuery': selectedQueryPoint = null; break;
-    case 'australiaView': australiaView(); break;
+    case 'australiaView': frameMapBounds(AUSTRALIA_BOUNDS); break;
+    case 'worldView': frameMapBounds(WORLD_BOUNDS); break;
     case 'screenshot': saveScreenshot(); break;
     case 'resetView': frameToFlood(); break;
     case 'topView': topView(); break;
@@ -914,8 +952,8 @@ function frameToFlood() {
   if (controls) { controls.target.copy(c); controls.update(); }
 }
 
-function australiaView() {
-  const [west, south, east, north] = AUSTRALIA_BOUNDS;
+function frameMapBounds(bounds) {
+  const [west, south, east, north] = bounds;
   const [x0, y0] = mercator(west, south), [x1, y1] = mercator(east, north);
   const x = (x0 + x1) / 2 - dataset.meta.extent.cx;
   const z = dataset.meta.extent.cy - (y0 + y1) / 2;
@@ -924,7 +962,7 @@ function australiaView() {
   tour = null;
   state.autoRotate = false;
   state.showBasemap = true;
-  ui.setBasemapStatus('Australia basemap');
+  ui.setBasemapStatus('Global basemap');
   if (basemap) basemap.setVisible(true); else ensureBasemap();
   camera.position.set(x, distance, z + 0.01);
   camera.lookAt(new THREE.Vector3(x, 0, z));
@@ -1167,9 +1205,9 @@ function saveScreenshot() {
     const font = Math.round(12 * renderer.getPixelRatio());
     ctx.font = `${font}px system-ui`;
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, composite.height - font * 2, font * 47, font * 2);
+    ctx.fillRect(0, composite.height - font * 2, ctx.measureText(basemap.exportCredit).width + font, font * 2);
     ctx.fillStyle = '#17212a';
-    ctx.fillText('Basemap: © Geoscience Australia / OpenStreetMap · CesiumJS', font / 2, composite.height - font / 2);
+    ctx.fillText(basemap.exportCredit, font / 2, composite.height - font / 2);
     canvas = composite;
   }
   canvas.toBlob((blob) => {

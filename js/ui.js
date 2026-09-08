@@ -53,7 +53,7 @@ const BLUES = [
 /** Contract §5 defaults — filled in for any key `main.js` left undefined. */
 const STATE_DEFAULTS = {
   waterOffset: 0,
-  vertExag: 8,
+  vertExag: 16,
   sunAzimuth: 135,
   sunElevation: 32,
   waveAmp: 1,
@@ -769,17 +769,19 @@ export function createUI(opts = {}) {
 
   const mapTools = h('div', 'fv-map-tools');
   const mapActions = h('div', 'fv-map-actions');
+  const worldBtn = h('button', 'fv-btn', 'World');
   const australiaBtn = h('button', 'fv-btn', 'Australia');
   const kempseyBtn = h('button', 'fv-btn', 'Kempsey');
   const mapToggle = h('button', 'fv-btn', 'Basemap');
-  for (const button of [australiaBtn, kempseyBtn, mapToggle]) attrs(button, { type: 'button' });
+  for (const button of [worldBtn, australiaBtn, kempseyBtn, mapToggle]) attrs(button, { type: 'button' });
   attrs(mapToggle, { 'aria-pressed': !!state.showBasemap });
   australiaBtn.addEventListener('click', () => emitAction('australiaView'));
+  worldBtn.addEventListener('click', () => emitAction('worldView'));
   kempseyBtn.addEventListener('click', () => emitAction('resetView'));
   mapToggle.addEventListener('click', () => toggle('showBasemap'));
-  const mapStatus = h('div', 'fv-map-status', 'Loading Australia basemap…');
+  const mapStatus = h('div', 'fv-map-status', 'Loading global basemap…');
   attrs(mapStatus, { role: 'status' });
-  add(mapActions, australiaBtn, kempseyBtn, mapToggle);
+  add(mapActions, worldBtn, australiaBtn, kempseyBtn, mapToggle);
   add(mapTools, mapActions, mapStatus);
   add(root, mapTools);
   const sceneLocator = h('button', 'fv-scene-locator', 'Kempsey · flood scene');
@@ -1045,7 +1047,7 @@ export function createUI(opts = {}) {
   const statsCard = h('section', 'fv-panel fv-stats');
   const statsHead = h('div', 'fv-head');
   add(statsHead,
-    h('span', 'fv-head-zh', 'Flood statistics'),
+    h('span', 'fv-head-zh', 'Kempsey flood statistics'),
     h('span', 'fv-head-en', 'HOTA'));
   add(statsCard, statsHead);
 
@@ -1440,7 +1442,7 @@ export function createUI(opts = {}) {
   const fLight = gui.addFolder('Light & terrain');
   bind(fLight, 'sunAzimuth', 'Sun azimuth (°)', 0, 360, 1);
   bind(fLight, 'sunElevation', 'Sun elevation (°)', 1, 88, 1);
-  // Keep a wide diagnostic range around the 8x default.
+  // Keep a wide diagnostic range around the 16x default.
   bind(fLight, 'vertExag', 'Vertical exaggeration (×)', 1, 30, 0.5);
 
   // --- water material -------------------------------------------------
@@ -1453,7 +1455,7 @@ export function createUI(opts = {}) {
   // --- display --------------------------------------------------------
   const fView = gui.addFolder('Display');
   bind(fView, 'showWater', 'Show water');
-  bind(fView, 'showBasemap', 'Australia basemap');
+  bind(fView, 'showBasemap', 'Global basemap');
   bind(fView, 'autoRotate', 'Auto-rotate');
   bind(fView, 'quality', 'Render quality', {
     High: 'high',

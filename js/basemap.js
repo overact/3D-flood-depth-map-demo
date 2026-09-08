@@ -1,7 +1,6 @@
-import { AUSTRALIA_BOUNDS, projectedPosition, projectedDirection, cesiumFov } from './basemap-transform.js';
+import { projectedPosition, projectedDirection, cesiumFov } from './basemap-transform.js';
 
 const RUNTIME = new URL('../vendor/cesium/', import.meta.url).href;
-const TILES = 'https://services.ga.gov.au/gis/rest/services/NationalBaseMap/MapServer/tile/{z}/{y}/{x}';
 let loading;
 
 function loadCesium() {
@@ -22,11 +21,12 @@ function loadCesium() {
   return loading;
 }
 
-/** Cesium draws only a flat Australian imagery plane. Three.js owns all input,
+/** Cesium draws only a flat global imagery plane. Three.js owns all input,
  * terrain, buildings and water, with its own depth buffer above this canvas.
  */
 export async function createBasemap({ meta, onStatus = () => {} }) {
-  const C = await loadCesium();
+  const [C, config] = await Promise.all([loadCesium(), fetch(new URL('../data/basemap.json', import.meta.url))
+    .then(response => { if (!response.ok) throw new Error('Basemap configuration unavailable'); return response.json(); })]);
   const container = document.createElement('div');
   container.className = 'fv-basemap';
   container.setAttribute('aria-hidden', 'true');
@@ -50,22 +50,29 @@ export async function createBasemap({ meta, onStatus = () => {} }) {
       contextOptions: { webgl: { alpha: false, antialias: false, preserveDrawingBuffer: true } },
     });
     const scene = widget.scene;
-    const rectangle = C.Rectangle.fromDegrees(...AUSTRALIA_BOUNDS);
+    const tilingScheme = new C.WebMercatorTilingScheme();
+    const rectangle = tilingScheme.rectangle;
     scene.screenSpaceCameraController.enableInputs = false;
     scene.globe.cartographicLimitRectangle = rectangle;
     scene.globe.enableLighting = false;
     scene.globe.showGroundAtmosphere = false;
     scene.globe.showWaterEffect = false;
     scene.globe.depthTestAgainstTerrain = false;
-    scene.globe.maximumScreenSpaceError = 3;
-    scene.globe.tileCacheSize = 80;
+    scene.globe.maximumScreenSpaceError = config.maximumScreenSpaceError;
+    scene.globe.tileCacheSize = config.tileCacheSize;
+    scene.globe.preloadAncestors = false;
+    scene.globe.preloadSiblings = false;
+    scene.globe.loadingDescendantLimit = 8;
+    const host = new URL(config.url);
+    C.RequestScheduler.requestsByServer[host.hostname + ':' + (host.port || (host.protocol === 'https:' ? '443' : '80'))]
+      = config.maximumRequestsPerServer;
     scene.globe.baseColor = C.Color.fromCssColorString('#233642');
     scene.backgroundColor = C.Color.fromCssColorString('#152530');
     const provider = new C.UrlTemplateImageryProvider({
-      url: TILES,
-      tilingScheme: new C.WebMercatorTilingScheme(),
-      rectangle, maximumLevel: 18,
-      credit: new C.Credit('<a href="https://services.ga.gov.au/gis/rest/services/NationalBaseMap/MapServer" target="_blank" rel="noopener">Geoscience Australia</a> · <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a>', true),
+      url: config.url, tilingScheme, rectangle,
+      minimumLevel: config.minimumLevel, maximumLevel: config.maximumLevel,
+      hasAlphaChannel: false, enablePickFeatures: false,
+      credit: new C.Credit(config.creditHtml, true),
     });
     scene.imageryLayers.addImageryProvider(provider);
     let visible = true, failed = false, renderedFrames = 0, cameraUpdates = 0;
@@ -82,19 +89,25 @@ export async function createBasemap({ meta, onStatus = () => {} }) {
     });
     scene.postRender.addEventListener(() => { renderedFrames++; });
     scene.globe.tileLoadProgressEvent.addEventListener((pending) => {
-      if (!tileError) onStatus(pending ? 'Loading Australia basemap…' : 'Australia basemap', pending ? 'loading' : 'ready');
+      if (!tileError) onStatus(pending ? 'Loading map tiles…' : 'Global basemap · ' + config.name, pending ? 'loading' : 'ready');
     });
     widget.resolutionScale = 1;
     widget.resize();
     // Establish Columbus View's camera reference frame before copying the
     // viewer's camera. No private Cesium transform/renderer APIs are used.
+    scene.globe.show = false; // establish the camera without requesting an unrelated default view
     widget.render();
+    scene.globe.show = true;
     return {
       canvas: widget.canvas,
+      exportCredit: config.exportCredit,
       get active() { return visible && !failed; },
       get debug() { return { mode: scene.mode,
         terrainProvider: scene.globe.terrainProvider instanceof C.EllipsoidTerrainProvider ? 'ellipsoid-flat' : 'unexpected',
-        tileSource: TILES, renderedFrames, cameraUpdates, tileError, failed, visible }; },
+        tileSource: config.url, minimumLevel: provider.minimumLevel, maximumLevel: provider.maximumLevel,
+        tileCacheSize: scene.globe.tileCacheSize, preloadAncestors: scene.globe.preloadAncestors,
+        preloadSiblings: scene.globe.preloadSiblings, maximumRequestsPerServer: config.maximumRequestsPerServer,
+        renderedFrames, cameraUpdates, tileError, failed, visible }; },
       project(lon, lat, height = 0) {
         const point = C.SceneTransforms.worldToWindowCoordinates(scene, C.Cartesian3.fromDegrees(lon, lat, height));
         return point ? [point.x, point.y] : null;

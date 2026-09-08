@@ -286,19 +286,36 @@ Other things worth knowing before editing:
 
 ## Controls
 
-The **Australia / Kempsey / Basemap** toolbar uses one shared camera across two
+The **World / Australia / Kempsey / Basemap** toolbar uses one shared camera across two
 canvases. CesiumJS 1.145.0 supplies a flat Web Mercator imagery plane below the
 transparent Three.js scene. Columbus View permits that plane to follow the
 oblique camera; it does not load external elevation, buildings, 3D Tiles, or an
-ion service. The map is limited to 110–155 E / 45–9 S (mainland and Tasmania).
+ion service. The global map covers the Web Mercator domain (all longitudes,
+approximately 85.05 S–85.05 N); polar points and seamless dateline wrapping are
+not part of this flat-map view. Australia remains a convenient regional preset.
 All terrain, water optics and flood calculations remain local to Three.js.
 
-The background uses [GA NationalBaseMap](https://services.ga.gov.au/gis/rest/services/NationalBaseMap/MapServer)
+The background uses [OpenStreetMap](https://www.openstreetmap.org/copyright)
 image tiles for geographic context, not flood evidence. Attribution remains
 visible and is included in composite PNG exports. Map and flood imagery can have
 different dates. Tile failures show a status without disabling local queries.
 The map toggle suspends its render calls; while shown, request-render mode limits
 map drawing to camera/tile changes. `?showBasemap=false` opens the standalone view.
+
+`data/basemap.json` configures the provider, attribution and budgets: levels 0–18,
+six simultaneous tile requests per host and a 48-tile soft cache target (tiles
+needed by the current frame can exceed it). Ancestor/sibling preloading is off.
+The browser honours provider HTTP caching headers; there is no bulk download,
+offline archive or prefetch feature. Public OSM service use follows its
+[tile policy](https://operations.osmfoundation.org/policies/tiles/); change the
+configuration to a suitable provider if deployment traffic requires it.
+
+Three.js skips local draw calls when the Kempsey bounds leave the frustum or
+shrink below eight pixels. Data/geometry remain in memory for quick return; hover
+solves and quality tuning also pause while the local view is culled. Camera clip
+planes adapt to scale to retain close-up precision and permit a world view.
+Default vertical exaggeration is **16×**, doubled from 8×; it affects display
+height only. Water depths, area/volume and population counts do not change.
 
 The pinned Cesium browser runtime is in `vendor/cesium/`, with upstream licences,
 package integrity, and per-file SHA-256 records. Reproduce it with
@@ -309,7 +326,10 @@ before HTTP compression. No API key or additional server is required.
 Run `node tests/basemap-transform.test.mjs` and, with Playwright/Chrome and the
 viewer served, `python3 tests/browser-basemap.py http://127.0.0.1:8000` for
 projection parity after rotation/zoom/resize, map toggling, national framing,
-composite export and tile-failure checks. Artifacts stay in ignored
+composite export, global LOD/local-culling and tile-failure checks. Browser tests
+serve local fixture tiles, never drive the public OSM tile servers with headless
+pan/zoom loops. Their screenshots are test imagery, not live cartographic evidence.
+Artifacts stay in ignored
 `output/basemap-regression/`. `tests/browser-depth.py` verifies the existing
 quantitative interaction and WorldPop overlay with the basemap enabled.
 

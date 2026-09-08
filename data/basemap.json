@@ -1,0 +1,12 @@
+{
+  "name": "OpenStreetMap",
+  "url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+  "creditHtml": "© <a href=\"https://www.openstreetmap.org/copyright\" target=\"_blank\" rel=\"noopener\">OpenStreetMap contributors</a>",
+  "exportCredit": "© OpenStreetMap contributors · CesiumJS",
+  "policyUrl": "https://operations.osmfoundation.org/policies/tiles/",
+  "minimumLevel": 0,
+  "maximumLevel": 18,
+  "tileCacheSize": 48,
+  "maximumRequestsPerServer": 6,
+  "maximumScreenSpaceError": 4
+}

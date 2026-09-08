@@ -402,7 +402,7 @@ export class ContextLayers {
     this.floodSamples = new WeakMap();
     this.floodSampleDataset = dataset;
     this.floodOffset = NaN;
-    this.group.scale.y = Number.isFinite(this.state.vertExag) ? this.state.vertExag : 8;
+    this.group.scale.y = Number.isFinite(this.state.vertExag) ? this.state.vertExag : 16;
     if (scene) scene.add(this.group);
   }
 

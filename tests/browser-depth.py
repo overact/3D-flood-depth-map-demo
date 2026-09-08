@@ -6,6 +6,7 @@ import json
 import sys
 from pathlib import Path
 from playwright.sync_api import sync_playwright
+from browser_tiles import mock_global_tiles
 
 base = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000"
 out = Path(__file__).resolve().parents[1] / "output" / "depth-regression"
@@ -13,11 +14,15 @@ out.mkdir(parents=True, exist_ok=True)
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True, channel="chrome")
     page = browser.new_page(viewport={"width": 1440, "height": 900})
+    mock_global_tiles(page)
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
     page.goto(base + "/?autoRotate=false&quality=low", wait_until="domcontentloaded")
     page.wait_for_function("window.__done === true", timeout=60000)
+    assert page.evaluate("__fv.state.vertExag") == 16
+    assert page.evaluate("__fv.uniforms.uVertExag.value") == 16
+    assert page.evaluate("__fv.contextLayers.group.scale.y") == 16
     page.keyboard.press("t")
     page.wait_for_timeout(300)
     page.mouse.click(750, 450)
@@ -127,7 +132,7 @@ with sync_playwright() as p:
     page.set_viewport_size({"width": 1440, "height": 900})
     page.screenshot(path=str(out / "worldpop-desktop.png"))
     assert not errors, errors
-    result = {"baselineDepth": baseline, "parity": parity, "cache": cache,
+    result = {"verticalScale": 16, "mockedTiles": True, "baselineDepth": baseline, "parity": parity, "cache": cache,
               "coalescing": updates, "population": population, "pageErrors": errors}
     (out / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))

@@ -1,6 +1,7 @@
 // The viewer uses local Web Mercator X-east/Y-up/Z-south. Cesium's flat-map
 // camera uses projected X-east/Y-north/Z-up before its internal axis transform.
 export const AUSTRALIA_BOUNDS = [110, -45, 155, -9];
+export const WORLD_BOUNDS = [-180, -85.05112878, 180, 85.05112878];
 export function projectedPosition(position, extent) {
   return [extent.cx + position.x, extent.cy - position.z, position.y];
 }
