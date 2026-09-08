@@ -779,8 +779,8 @@ export function createUI(opts = {}) {
   worldBtn.addEventListener('click', () => emitAction('worldView'));
   kempseyBtn.addEventListener('click', () => emitAction('resetView'));
   mapToggle.addEventListener('click', () => toggle('showBasemap'));
-  const mapStatus = h('div', 'fv-map-status', 'Loading global basemap…');
-  attrs(mapStatus, { role: 'status' });
+  const mapStatus = h('div', 'fv-map-status');
+  attrs(mapStatus, { role: 'status', hidden: true });
   add(mapActions, worldBtn, australiaBtn, kempseyBtn, mapToggle);
   add(mapTools, mapActions, mapStatus);
   add(root, mapTools);
@@ -796,7 +796,10 @@ export function createUI(opts = {}) {
     }
   }
   function setBasemapStatus(text, status = 'ready') {
-    mapStatus.textContent = state.showBasemap ? text : 'Basemap off';
+    // Routine tile loading is background work, including every camera movement.
+    // Keep the status region quiet unless the visible basemap needs attention.
+    mapStatus.hidden = status !== 'error' || !state.showBasemap;
+    mapStatus.textContent = mapStatus.hidden ? '' : text;
     mapStatus.dataset.status = status;
   }
 

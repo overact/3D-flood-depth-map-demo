@@ -377,7 +377,7 @@ body > canvas {
 
 .fv-zone--br {
   right: calc(var(--fv-space-4) + var(--fv-safe-r));
-  bottom: calc(var(--fv-space-4) + var(--fv-safe-b));
+  bottom: calc(32px + var(--fv-safe-b));
   align-items: flex-end;
   /* Never taller than the viewport: the ramp inside shrinks to fit. */
   max-height: calc(100% - var(--fv-space-4) * 2 - var(--fv-safe-t) - var(--fv-safe-b));
@@ -1230,17 +1230,18 @@ canvas.fv-canvas { z-index: 1; }
 .fv-map-actions .fv-btn[aria-pressed="true"] { border-color: var(--fv-accent); }
 .fv-map-status { max-width: 340px; margin-top: 5px; padding: 3px 8px; font-size: 11px; text-align: center; color: var(--fv-ink); background: var(--fv-scrim); border-radius: 4px; }
 .fv-map-status[data-status="error"] { color: #ffd18a; }
+.fv-map-status[hidden] { display: none; }
 .fv-scene-locator { position: absolute; transform: translate(-100%, -100%); pointer-events: auto; border: 1px solid #a6d9ff; border-radius: 5px; padding: 7px 10px; background: #173a56; color: #fff; font: 12px var(--fv-sans); cursor: pointer; }
 .fv-scene-locator::after { content: ''; position: absolute; right: -4px; bottom: -4px; width: 8px; height: 8px; border-radius: 50%; background: #a6d9ff; }
 .fv-scene-locator[hidden] { display: none; }
-.fv-basemap-credits { position: fixed; z-index: 5; bottom: 105px; left: 50%; transform: translateX(-50%); width: max-content; max-width: 45vw; padding: 2px 7px; border-radius: 3px; background: rgba(255,255,255,.92); font-size: 10px; }
-.fv-basemap-credits .cesium-widget-credits { position: static; color: #17212a; text-shadow: none; }
+.fv-basemap-credits { position: fixed; z-index: 25; bottom: calc(4px + env(safe-area-inset-bottom, 0px)); right: calc(8px + env(safe-area-inset-right, 0px)); max-width: calc(100vw - 16px); padding: 2px 5px; border-radius: 3px; background: rgba(255,255,255,.9); font: 10px/14px system-ui, sans-serif; }
+.fv-basemap-credits .cesium-widget-credits { display: flex; align-items: center; gap: 5px; position: static; padding: 0; color: #17212a; text-shadow: none; }
 .fv-basemap-credits .cesium-widget-credits a { color: #17212a; }
-.fv-basemap-credits .cesium-credit-textContainer { font-size: 10px; }
+.fv-basemap-credits .cesium-credit-logoContainer img { display: block; width: auto; height: 14px; }
+.fv-basemap-credits .cesium-credit-textContainer { font-size: 10px; white-space: nowrap; }
 @media (max-width: 860px) {
   .fv-map-tools { top: 52px; }
   .fv-map-status { max-width: 285px; font-size: 10px; }
-  .fv-basemap-credits { bottom: 140px; max-width: calc(100vw - 20px); width: max-content; }
 }
 .fv-context-swatch--population { background: #21918c; }
 .fv-population-legend { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--fv-line); }
@@ -1871,7 +1872,7 @@ canvas.fv-canvas { z-index: 1; }
        is ROTATE — spun the camera. */
     pointer-events: auto;
     padding: 0 var(--fv-space-2)
-             calc(var(--fv-space-2) + var(--fv-safe-b));
+             calc(var(--fv-space-2) + var(--fv-safe-b) + 20px);
     background-color: var(--fv-scrim-strong);
     background-image: var(--fv-tint-strong);
     -webkit-backdrop-filter: blur(var(--fv-blur-lg)) saturate(var(--fv-sat));

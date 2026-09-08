@@ -23,6 +23,27 @@ ALIGNMENT = """async () => {
   });
 }"""
 
+def check_credits(page):
+    credits = page.locator('.fv-basemap-credits')
+    rect = credits.bounding_box()
+    viewport = page.viewport_size
+    assert rect and rect['height'] <= 22, rect
+    assert 0 <= viewport['width'] - rect['x'] - rect['width'] <= 10, rect
+    assert 0 <= viewport['height'] - rect['y'] - rect['height'] <= 6, rect
+    assert page.locator('.fv-basemap-credits img').bounding_box()['height'] <= 14
+    link = credits.get_by_role('link', name='OpenStreetMap contributors')
+    assert link.is_visible() and link.get_attribute('href') == 'https://www.openstreetmap.org/copyright'
+    assert link.evaluate('''e => {const r=e.getBoundingClientRect();
+      return e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}'''), 'Attribution link is covered'
+    for selector in ['.fv-scrub', '.fv-zone--br']:
+        target = page.locator(selector)
+        if target.is_visible():
+            box = target.bounding_box()
+            overlap = (box['x'] < rect['x'] + rect['width'] and box['x'] + box['width'] > rect['x']
+                       and box['y'] < rect['y'] + rect['height'] and box['y'] + box['height'] > rect['y'])
+            assert not overlap, (selector, box, rect)
+
+
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True, channel="chrome")
     page = browser.new_page(viewport={"width": 1440, "height": 900})
@@ -33,6 +54,14 @@ with sync_playwright() as p:
     page.goto(base + "/?quality=low&autoRotate=false", wait_until="domcontentloaded")
     page.wait_for_function("window.__fv?.basemap?.active === true", timeout=60000)
     page.wait_for_function("document.querySelector('.fv-map-status').dataset.status === 'ready'", timeout=45000)
+    assert page.locator('.fv-map-status').is_hidden()
+    check_credits(page)
+    page.evaluate('''() => {
+      window.basemapNotices = [];
+      const status = document.querySelector('.fv-map-status');
+      new MutationObserver(() => {if (!status.hidden) basemapNotices.push(status.textContent);})
+        .observe(status, {attributes:true, childList:true, subtree:true});
+    }''')
     assert page.locator("canvas").count() == 2
     assert page.evaluate("__fv.basemap.debug.terrainProvider") == "ellipsoid-flat"
     assert page.evaluate("__fv.basemap.debug.mode") == 1
@@ -54,6 +83,8 @@ with sync_playwright() as p:
     moved = page.evaluate(ALIGNMENT)
     assert max(moved) < 0.1, moved
     assert page.evaluate("__fv.basemap.debug.cameraUpdates") > 2
+    assert page.locator('.fv-map-status').is_hidden()
+    assert page.evaluate('basemapNotices') == [], 'Camera movement displayed routine tile loading'
 
     page.get_by_role("button", name="World", exact=True).click()
     page.wait_for_function("__fv.renderBudget.localSceneVisible === false")
@@ -88,6 +119,7 @@ with sync_playwright() as p:
     page.wait_for_timeout(500)
     mobile = page.evaluate(ALIGNMENT)
     assert max(mobile) < 0.1, mobile
+    check_credits(page)
     page.screenshot(path=str(out / "mobile-overlay.png"))
     assert not errors, errors
 
@@ -99,6 +131,7 @@ with sync_playwright() as p:
     failed.goto(base + "/?quality=low&autoRotate=false", wait_until="domcontentloaded")
     failed.wait_for_function("window.__fv?.basemap?.debug.tileError === true", timeout=60000)
     assert "unavailable" in failed.locator(".fv-map-status").inner_text()
+    assert failed.locator('.fv-map-status').is_visible()
     failed.locator("input[type=range]").fill("1")
     assert failed.evaluate("__fv.state.waterOffset") == 1
     assert failed.evaluate("__fv.dataset.arrays.terrain.length") > 1000000
