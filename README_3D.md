@@ -286,7 +286,34 @@ Other things worth knowing before editing:
 
 ## Controls
 
-Mouse: left-drag pan, right-drag orbit, wheel zoom (MapControls).
+The **Australia / Kempsey / Basemap** toolbar uses one shared camera across two
+canvases. CesiumJS 1.145.0 supplies a flat Web Mercator imagery plane below the
+transparent Three.js scene. Columbus View permits that plane to follow the
+oblique camera; it does not load external elevation, buildings, 3D Tiles, or an
+ion service. The map is limited to 110–155 E / 45–9 S (mainland and Tasmania).
+All terrain, water optics and flood calculations remain local to Three.js.
+
+The background uses [GA NationalBaseMap](https://services.ga.gov.au/gis/rest/services/NationalBaseMap/MapServer)
+image tiles for geographic context, not flood evidence. Attribution remains
+visible and is included in composite PNG exports. Map and flood imagery can have
+different dates. Tile failures show a status without disabling local queries.
+The map toggle suspends its render calls; while shown, request-render mode limits
+map drawing to camera/tile changes. `?showBasemap=false` opens the standalone view.
+
+The pinned Cesium browser runtime is in `vendor/cesium/`, with upstream licences,
+package integrity, and per-file SHA-256 records. Reproduce it with
+`python tools/vendor_cesium.py`. Its static files total about 13.2 MB; only needed
+runtime/worker/assets load in the browser. The main browser script is about 6 MB
+before HTTP compression. No API key or additional server is required.
+
+Run `node tests/basemap-transform.test.mjs` and, with Playwright/Chrome and the
+viewer served, `python3 tests/browser-basemap.py http://127.0.0.1:8000` for
+projection parity after rotation/zoom/resize, map toggling, national framing,
+composite export and tile-failure checks. Artifacts stay in ignored
+`output/basemap-regression/`. `tests/browser-depth.py` verifies the existing
+quantitative interaction and WorldPop overlay with the basemap enabled.
+
+Mouse: left-drag orbit, right-drag pan, wheel zoom.
 Keys: `R` orbit · `T` top view · `F` fly tour · `S` screenshot · `W` water on/off ·
 `D` science colouring · `Esc` close panel.
 

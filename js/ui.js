@@ -66,6 +66,7 @@ const STATE_DEFAULTS = {
   showOsmWater: false,
   showPopulation: false,
   autoRotate: false,
+  showBasemap: true,
   quality: 'high'
 };
 
@@ -766,6 +767,37 @@ export function createUI(opts = {}) {
   const zoneBC = h('div', 'fv-zone fv-zone--bc');
   add(root, zoneTL, zoneTR, zoneBR, zoneBL, zoneBC); // BR before BL: narrow-mode stacking order
 
+  const mapTools = h('div', 'fv-map-tools');
+  const mapActions = h('div', 'fv-map-actions');
+  const australiaBtn = h('button', 'fv-btn', 'Australia');
+  const kempseyBtn = h('button', 'fv-btn', 'Kempsey');
+  const mapToggle = h('button', 'fv-btn', 'Basemap');
+  for (const button of [australiaBtn, kempseyBtn, mapToggle]) attrs(button, { type: 'button' });
+  attrs(mapToggle, { 'aria-pressed': !!state.showBasemap });
+  australiaBtn.addEventListener('click', () => emitAction('australiaView'));
+  kempseyBtn.addEventListener('click', () => emitAction('resetView'));
+  mapToggle.addEventListener('click', () => toggle('showBasemap'));
+  const mapStatus = h('div', 'fv-map-status', 'Loading Australia basemap…');
+  attrs(mapStatus, { role: 'status' });
+  add(mapActions, australiaBtn, kempseyBtn, mapToggle);
+  add(mapTools, mapActions, mapStatus);
+  add(root, mapTools);
+  const sceneLocator = h('button', 'fv-scene-locator', 'Kempsey · flood scene');
+  attrs(sceneLocator, { type: 'button', hidden: true });
+  sceneLocator.addEventListener('click', () => emitAction('resetView'));
+  add(root, sceneLocator);
+  function setSceneLocator(point) {
+    sceneLocator.hidden = !point;
+    if (point) {
+      sceneLocator.style.left = point[0] + 'px';
+      sceneLocator.style.top = point[1] + 'px';
+    }
+  }
+  function setBasemapStatus(text, status = 'ready') {
+    mapStatus.textContent = state.showBasemap ? text : 'Basemap off';
+    mapStatus.dataset.status = status;
+  }
+
   /* ---------------- title / credit / about ---------------- */
 
   const titleCard = h('section', 'fv-panel fv-title');
@@ -1421,6 +1453,7 @@ export function createUI(opts = {}) {
   // --- display --------------------------------------------------------
   const fView = gui.addFolder('Display');
   bind(fView, 'showWater', 'Show water');
+  bind(fView, 'showBasemap', 'Australia basemap');
   bind(fView, 'autoRotate', 'Auto-rotate');
   bind(fView, 'quality', 'Render quality', {
     High: 'high',
@@ -1477,6 +1510,8 @@ export function createUI(opts = {}) {
     paintOffset(clampOffset(state.waterOffset));
     legend.classList.toggle('fv-legend--active', !!state.science);
     populationLegend.hidden = !populationAvailable || !state.showPopulation;
+    mapToggle.setAttribute('aria-pressed', String(!!state.showBasemap));
+    if (!state.showBasemap) mapStatus.textContent = 'Basemap off';
   }
 
   /* ---------------- statistics ---------------- */
@@ -1810,7 +1845,7 @@ export function createUI(opts = {}) {
   // setMeta / refresh / dispose / root are additive conveniences for main.js.
   // setTab / setUiHidden drive the narrow-viewport drawer (see above).
   return {
-    setStats, setQuery, setStatus, gui, state, setMeta: applyMeta, setPopulationMeta, refresh, dispose, root,
+    setStats, setQuery, setStatus, gui, state, setMeta: applyMeta, setPopulationMeta, setBasemapStatus, setSceneLocator, refresh, dispose, root,
     setTab, setUiHidden, get tab() { return currentTab; },
   };
 }

@@ -17,6 +17,8 @@ import { createWaterMaterial, createWaterGeometry } from './water.js';
 import { loadContextLayers } from './context-layers.js';
 import { createUI } from './ui.js';
 import { isWetCell, queryFloodDepth } from './flood-depth.js';
+import { createBasemap } from './basemap.js';
+import { AUSTRALIA_BOUNDS, mercator } from './basemap-transform.js';
 
 const WATER_LAYER = 1;
 
@@ -179,12 +181,15 @@ const state = {
   showRoads: true,
   showOsmWater: false,
   showPopulation: false,
-  autoRotate: true,
+  autoRotate: false,
+  showBasemap: true,
   hoverFx: !COARSE_POINTER,
   quality: pickInitialQuality(),
 };
 
 let renderer, scene, camera, controls, ui, dataset, contextLayers;
+let basemap = null, basemapLoading = null;
+let locatorCentre = null;
 let sceneRT, blitScene, blitCam, blitMat;
 let sky, sun = new THREE.Vector3(), sunLight, hemiLight, envCubeRT, envCubeCam, envScene;
 let terrainGroup, terrainMesh, waterMesh, waterMat;
@@ -222,6 +227,7 @@ init().catch((err) => {
 
 async function init() {
   renderer = new THREE.WebGLRenderer({
+    alpha: true,
     antialias: false,                 // AA comes from supersampling via devicePixelRatio
     preserveDrawingBuffer: true,      // needed for the screenshot button
     powerPreference: 'high-performance',
@@ -235,7 +241,7 @@ async function init() {
   document.body.appendChild(renderer.domElement);
 
   scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(46, window.innerWidth / window.innerHeight, 20, 400000);
+  camera = new THREE.PerspectiveCamera(46, window.innerWidth / window.innerHeight, 20, 40000000);
 
   ui = createUI({ state, onChange, onAction, meta: null });
   setStatus('Initialising', 0.02);
@@ -337,13 +343,14 @@ async function init() {
   };
   controls.maxPolarAngle = Math.PI * 0.495;
   controls.minDistance = 300;
-  controls.maxDistance = 120000;
+  controls.maxDistance = 12000000;
   controls.zoomSpeed = 0.9;
   controls.addEventListener('start', () => { tour = null; });
   // After the controls exist, not before: frameToFlood() sets controls.target, and calling
   // it earlier silently left the orbit centre at the origin — which auto-rotate then spins
   // around, swinging the whole floodplain through the frame.
   frameToFlood();
+  locatorCentre = floodCentre();
 
   renderer.domElement.addEventListener('pointerdown', (e) => {
     pointerStart = { x: e.clientX, y: e.clientY, t: performance.now(), b: e.button };
@@ -378,6 +385,7 @@ async function init() {
     three: { renderer, scene, get camera() { return camera; }, get controls() { return controls; } },
     get dataset() { return dataset; },
     get contextLayers() { return contextLayers; },
+    get basemap() { return basemap; },
     pickSurface: (x, y) => pickSurface(new THREE.Vector2(x, y)),
     solveHoverBody: (i) => solveHoverBody(i),
     get hoverCells() { return hoverCells; },
@@ -428,6 +436,24 @@ async function init() {
   }
   window.__done = true;
   renderer.setAnimationLoop(animate);
+  if (state.showBasemap) ensureBasemap();
+}
+
+function ensureBasemap() {
+  if (basemap || basemapLoading) return basemapLoading;
+  ui.setBasemapStatus('Loading Australia basemap…', 'loading');
+  basemapLoading = createBasemap({ meta: dataset.meta, onStatus: ui.setBasemapStatus })
+    .then(value => {
+      basemap = value;
+      basemap.setVisible(state.showBasemap);
+      render();
+    })
+    .catch(error => {
+      ui.setBasemapStatus('Basemap unavailable · local scene remains available', 'error');
+      console.warn('[flood-basemap]', error.message);
+    })
+    .finally(() => { basemapLoading = null; });
+  return basemapLoading;
 }
 
 function frame() { return new Promise((r) => requestAnimationFrame(() => r())); }
@@ -522,10 +548,13 @@ function updateSun() {
   const disc = sky.material.uniforms.showSunDisc;
   const hadDisc = disc ? disc.value : null;
   if (disc) disc.value = false;
+  const skyWasVisible = sky.visible;
+  sky.visible = true; // retain sky reflections while the visible backdrop is a map
   envScene.add(sky);
   envCubeCam.update(renderer, envScene);
   scene.add(sky);
   if (disc) disc.value = hadDisc;
+  sky.visible = skyWasVisible;
 
   if (waterMat) {
     waterMat.userData.setEnvMap(envCubeRT.texture);
@@ -606,6 +635,7 @@ function onResize() {
   renderer.setSize(w, h);
   const dpr = renderer.getPixelRatio();
   makeTargets(Math.max(2, Math.floor(w * dpr)), Math.max(2, Math.floor(h * dpr)));
+  if (basemap) basemap.resize();
 }
 
 function animate() {
@@ -636,6 +666,18 @@ function animate() {
 }
 
 function render() {
+  const mapVisible = !!(basemap && basemap.active && state.showBasemap);
+  if (basemap && mapVisible) { basemap.sync(camera); basemap.render(); }
+  let locator = null;
+  if (mapVisible && locatorCentre && camera.position.distanceTo(controls.target) > 250000) {
+    const p = locatorCentre.clone().project(camera);
+    if (Math.abs(p.x) < 0.98 && Math.abs(p.y) < 0.98 && p.z > -1 && p.z < 1) {
+      locator = [(p.x + 1) / 2 * innerWidth, (1 - p.y) / 2 * innerHeight];
+    }
+  }
+  ui.setSceneLocator(locator);
+  sky.visible = !mapVisible;
+  renderer.setClearColor(0x000000, mapVisible ? 0 : 1);
   // Slider events can arrive several times before a frame. Only the latest
   // offset needs a context recolour, including when exporting a screenshot.
   if (contextFloodDirty && contextLayers) {
@@ -803,6 +845,12 @@ function onChange(key, value) {
     agentSceneRevisionReady = false;
   }
   switch (key) {
+    case 'showBasemap':
+      ui.setBasemapStatus(value ? 'Australia basemap' : 'Basemap off');
+      if (basemap) basemap.setVisible(!!value);
+      else if (value) ensureBasemap();
+      ui.refresh();
+      break;
     case 'sunAzimuth': case 'sunElevation': updateSun(); break;
     case 'quality':
       // A hand-picked tier is final: if the user opened the panel and chose one, the tuner
@@ -830,6 +878,7 @@ function onChange(key, value) {
 function onAction(name) {
   switch (name) {
     case 'clearQuery': selectedQueryPoint = null; break;
+    case 'australiaView': australiaView(); break;
     case 'screenshot': saveScreenshot(); break;
     case 'resetView': frameToFlood(); break;
     case 'topView': topView(); break;
@@ -863,6 +912,25 @@ function frameToFlood() {
   camera.position.set(c.x - 11000, 17000, c.z + 23000);
   camera.lookAt(c);
   if (controls) { controls.target.copy(c); controls.update(); }
+}
+
+function australiaView() {
+  const [west, south, east, north] = AUSTRALIA_BOUNDS;
+  const [x0, y0] = mercator(west, south), [x1, y1] = mercator(east, north);
+  const x = (x0 + x1) / 2 - dataset.meta.extent.cx;
+  const z = dataset.meta.extent.cy - (y0 + y1) / 2;
+  const distance = Math.max((y1 - y0), (x1 - x0) / camera.aspect)
+    / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) * 1.15;
+  tour = null;
+  state.autoRotate = false;
+  state.showBasemap = true;
+  ui.setBasemapStatus('Australia basemap');
+  if (basemap) basemap.setVisible(true); else ensureBasemap();
+  camera.position.set(x, distance, z + 0.01);
+  camera.lookAt(new THREE.Vector3(x, 0, z));
+  controls.target.set(x, 0, z);
+  controls.update();
+  ui.refresh();
 }
 
 function regionLabelFromId(regionId) {
@@ -1088,7 +1156,23 @@ function stepTour(dt) {
 
 function saveScreenshot() {
   render();
-  renderer.domElement.toBlob((blob) => {
+  let canvas = renderer.domElement;
+  if (basemap?.active && state.showBasemap) {
+    basemap.render(true);
+    const composite = document.createElement('canvas');
+    composite.width = canvas.width; composite.height = canvas.height;
+    const ctx = composite.getContext('2d');
+    ctx.drawImage(basemap.canvas, 0, 0, composite.width, composite.height);
+    ctx.drawImage(canvas, 0, 0);
+    const font = Math.round(12 * renderer.getPixelRatio());
+    ctx.font = `${font}px system-ui`;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, composite.height - font * 2, font * 47, font * 2);
+    ctx.fillStyle = '#17212a';
+    ctx.fillText('Basemap: © Geoscience Australia / OpenStreetMap · CesiumJS', font / 2, composite.height - font / 2);
+    canvas = composite;
+  }
+  canvas.toBlob((blob) => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `kempsey-flood-3d_dz${state.waterOffset.toFixed(2)}m.png`;

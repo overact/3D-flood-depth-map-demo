@@ -10,6 +10,13 @@ River flood.
 The default viewer renders a separate water surface, supports water-level scenarios, and uses
 the published HOTA mask and statistics exactly at Δ = 0.
 
+An Australian flat basemap is rendered by CesiumJS beneath the transparent Three.js
+canvas. Use **Australia** for the national view, **Kempsey** (or the map marker) to
+return to the flood scene, and **Basemap** to toggle the background. Cesium loads
+only map imagery; terrain, buildings and water remain in Three.js. Screenshots
+combine both canvases. Map tiles require network access; local flood data remains
+usable if the tile service is unavailable.
+
 **Method** — SegFormer + **HOTA** (Hierarchical Overlap-Tiling Aggregation) + a 3D depth
 refinement module.
 

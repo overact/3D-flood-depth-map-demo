@@ -1222,6 +1222,26 @@ body > canvas {
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .18);
 }
 
+.fv-basemap { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+.fv-basemap[hidden], .fv-basemap-credits[hidden] { display: none; }
+canvas.fv-canvas { z-index: 1; }
+.fv-map-tools { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); pointer-events: auto; }
+.fv-map-actions { display: flex; justify-content: center; gap: 6px; }
+.fv-map-actions .fv-btn[aria-pressed="true"] { border-color: var(--fv-accent); }
+.fv-map-status { max-width: 340px; margin-top: 5px; padding: 3px 8px; font-size: 11px; text-align: center; color: var(--fv-ink); background: var(--fv-scrim); border-radius: 4px; }
+.fv-map-status[data-status="error"] { color: #ffd18a; }
+.fv-scene-locator { position: absolute; transform: translate(-100%, -100%); pointer-events: auto; border: 1px solid #a6d9ff; border-radius: 5px; padding: 7px 10px; background: #173a56; color: #fff; font: 12px var(--fv-sans); cursor: pointer; }
+.fv-scene-locator::after { content: ''; position: absolute; right: -4px; bottom: -4px; width: 8px; height: 8px; border-radius: 50%; background: #a6d9ff; }
+.fv-scene-locator[hidden] { display: none; }
+.fv-basemap-credits { position: fixed; z-index: 5; bottom: 105px; left: 50%; transform: translateX(-50%); width: max-content; max-width: 45vw; padding: 2px 7px; border-radius: 3px; background: rgba(255,255,255,.92); font-size: 10px; }
+.fv-basemap-credits .cesium-widget-credits { position: static; color: #17212a; text-shadow: none; }
+.fv-basemap-credits .cesium-widget-credits a { color: #17212a; }
+.fv-basemap-credits .cesium-credit-textContainer { font-size: 10px; }
+@media (max-width: 860px) {
+  .fv-map-tools { top: 52px; }
+  .fv-map-status { max-width: 285px; font-size: 10px; }
+  .fv-basemap-credits { bottom: 140px; max-width: calc(100vw - 20px); width: max-content; }
+}
 .fv-context-swatch--population { background: #21918c; }
 .fv-population-legend { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--fv-line); }
 .fv-population-legend[hidden] { display: none; }
