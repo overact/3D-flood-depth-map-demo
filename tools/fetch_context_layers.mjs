@@ -370,7 +370,7 @@ const waterElements = await overpass(
   `[out:json][timeout:180];(way["natural"="water"](${bboxText});way[waterway](${bboxText}););out tags geom;`, 'water');
 const populationFeatures = shouldFetchSa1Population
   ? await fetchAbsPopulation()
-  : existingPopulationSnapshot.features || [];
+  : existingPopulationSnapshot.features || existingPopulationSnapshot.cells || [];
 
 const osmBuildings = buildingElements.map((e) => {
   const ring = clipRing(elementLine(e, 0.5, true));
@@ -502,9 +502,10 @@ const populationLayer = shouldFetchSa1Population
       boundarySource: existingPopulationSnapshot?.boundarySource,
       countSource: existingPopulationSnapshot?.countSource,
     };
-const absAttribution = shouldFetchSa1Population
+const populationAttribution = shouldFetchSa1Population
   ? 'Australian Bureau of Statistics, 2021 Census General Community Profile (CC BY 4.0)'
-  : 'Australian Bureau of Statistics, 2021 Census Mesh Block Counts + ASGS 2021 Mesh Block boundaries (CC BY 4.0)';
+  : existingPopulationSnapshot?.attribution
+    || 'Australian Bureau of Statistics, 2021 Census Mesh Block Counts + ASGS 2021 Mesh Block boundaries (CC BY 4.0)';
 await writeJson('manifest.json', {
   version: 1,
   generatedAt,
@@ -531,7 +532,7 @@ await writeJson('manifest.json', {
     ...(existingManifest?.attribution || []).filter((value) =>
       !String(value).startsWith('Australian Bureau of Statistics, 2021 Census')),
     '© OpenStreetMap contributors, ODbL 1.0',
-    absAttribution,
+    populationAttribution,
   ].filter((value, index, values) => values.indexOf(value) === index),
 });
 

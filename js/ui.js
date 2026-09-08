@@ -30,6 +30,7 @@
  */
 
 import * as LilGUI from 'three/addons/libs/lil-gui.module.min.js';
+import { POPULATION_RAMP, populationPosition } from './population-style.js';
 
 // lil-gui ships GUI as a named export; some builds also expose it as default.
 const GUI = LilGUI.GUI || LilGUI.default;
@@ -819,7 +820,7 @@ export function createUI(opts = {}) {
       'smooth fill.'),
     para('Context layers',
       ' — building footprints and heights use the local GlobalBuildingAtlas LoD1 snapshot; ' +
-      'roads and waterways use an OpenStreetMap snapshot. The population layer uses ABS.'),
+      'roads and waterways use an OpenStreetMap snapshot. The population layer uses WorldPop Global2.'),
     para('Building heights',
       ' — the displayed building height is the GBA.LoD1 height attribute in metres; it is ' +
       'a PlanetScope/ML estimate supplied by GBA, not a value calculated by this project. ' +
@@ -830,11 +831,13 @@ export function createUI(opts = {}) {
       'and a road skeleton so small features stay visible; zooming in restores the metric ' +
       'extrusions and road ribbons.'),
     para('Population density',
-      ' — the population layer uses Australian Bureau of Statistics (ABS) 2021 Census ' +
-      'Mesh Block Counts (Persons Usually Resident) joined to official ASGS 2021 Mesh ' +
-      'Block boundaries. Density is people per km² using the full ABS Mesh Block area; ' +
-      'the displayed geometry is clipped to the scene and draped onto the terrain. It is ' +
-      'contextual information, not flood depth.')
+      ' — WorldPop Global2 R2025A v1 constrained estimates for 2021, on the native ' +
+      '3-arcsecond grid (about 100 m at the equator). Source values are estimated ' +
+      'residents per cell; colours show people per km² using WGS84 ellipsoidal cell ' +
+      'area on a logarithmic scale. Zero and NoData cells are transparent. Edge counts ' +
+      'are area-weighted when clipped. This is modelled residential population, not ' +
+      'observed occupants or real-time presence. WorldPop / University of Southampton, ' +
+      'CC BY 4.0; DOI: 10.5258/SOTON/WP00839. R2025A is labelled alpha by its publisher.')
   );
 
   // Numeric facts, straight out of meta.json (filled in by applyMeta).
@@ -959,6 +962,32 @@ export function createUI(opts = {}) {
     add(contextList, item);
   }
   add(contextLegend, contextList);
+  const populationLegend = h('section', 'fv-population-legend');
+  attrs(populationLegend, { hidden: true, 'aria-label': 'Population density scale' });
+  const populationTitle = h('div', 'fv-context-legend-title', 'WorldPop · 2021');
+  const populationBar = h('div', 'fv-population-bar');
+  populationBar.style.setProperty('--fv-population-ramp', 'linear-gradient(to right,' + POPULATION_RAMP.join(',') + ')');
+  const populationTicks = h('div', 'fv-population-ticks');
+  add(populationLegend, populationTitle,
+    h('div', 'fv-population-caption', 'Estimated people/km² · log scale'),
+    populationBar, populationTicks,
+    h('div', 'fv-population-caption', '~100 m grid · zero / NoData transparent'),
+    h('div', 'fv-population-credit', 'WorldPop / University of Southampton · CC BY 4.0'));
+  add(contextLegend, populationLegend);
+  let populationAvailable = false;
+  function setPopulationMeta(data) {
+    populationAvailable = !!data?.features?.length;
+    populationTitle.textContent = `${data?.source || 'Population'} · ${data?.year || ''}`;
+    const maximum = data?.display?.legendMax || 1;
+    populationTicks.textContent = '';
+    const values = [0, 10, 100, 1000].filter(v => v < maximum * 0.6).concat(maximum);
+    for (const value of values) {
+      const tick = h('span', null, value.toLocaleString('en'));
+      tick.style.setProperty('--fv-population-position', populationPosition(value, maximum) * 100 + '%');
+      add(populationTicks, tick);
+    }
+    populationLegend.hidden = !populationAvailable || !state.showPopulation;
+  }
   add(zoneBR, contextLegend);
 
   /* ---------------- flood statistics card ---------------- */
@@ -1356,6 +1385,7 @@ export function createUI(opts = {}) {
       // lil-gui has already written state[key]; keep the mirrors in sync.
       if (key === 'waterOffset') paintOffset(v);
       if (key === 'science') legend.classList.toggle('fv-legend--active', !!v);
+      if (key === 'showPopulation') populationLegend.hidden = !populationAvailable || !v;
       emitChange(key, v);
     });
     controllers.push(ctrl);
@@ -1446,6 +1476,7 @@ export function createUI(opts = {}) {
     }
     paintOffset(clampOffset(state.waterOffset));
     legend.classList.toggle('fv-legend--active', !!state.science);
+    populationLegend.hidden = !populationAvailable || !state.showPopulation;
   }
 
   /* ---------------- statistics ---------------- */
@@ -1566,10 +1597,11 @@ export function createUI(opts = {}) {
    * world space actually uses, and main.js sends it that way.
    * Optional extras: `sea` and `observed` booleans → shown as small tags.
    */
-  function setQuery(q) {
+  function setQuery(q, { reveal = true } = {}) {
     if (!q || typeof q !== 'object') {
       queryCard.setAttribute('hidden', '');
       legendMarker.setAttribute('hidden', '');
+      emitAction('clearQuery');
       return;
     }
 
@@ -1608,7 +1640,7 @@ export function createUI(opts = {}) {
     // the map has to bring that tab up — otherwise the reading the user just
     // asked for is written into a panel they cannot see. Never force the drawer
     // open while the interface is deliberately hidden.
-    if (isNarrow() && !uiHidden && currentTab !== 'stats') setTab('stats');
+    if (reveal && isNarrow() && !uiHidden && currentTab !== 'stats') setTab('stats');
   }
 
   qClose.addEventListener('click', () => setQuery(null));
@@ -1778,7 +1810,7 @@ export function createUI(opts = {}) {
   // setMeta / refresh / dispose / root are additive conveniences for main.js.
   // setTab / setUiHidden drive the narrow-viewport drawer (see above).
   return {
-    setStats, setQuery, setStatus, gui, state, setMeta: applyMeta, refresh, dispose, root,
+    setStats, setQuery, setStatus, gui, state, setMeta: applyMeta, setPopulationMeta, refresh, dispose, root,
     setTab, setUiHidden, get tab() { return currentTab; },
   };
 }

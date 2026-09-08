@@ -16,22 +16,15 @@ import { buildTerrainGeometry, createTerrainMaterial, FLAG_OUT } from './terrain
 import { createWaterMaterial, createWaterGeometry } from './water.js';
 import { loadContextLayers } from './context-layers.js';
 import { createUI } from './ui.js';
+import { isWetCell, queryFloodDepth } from './flood-depth.js';
 
 const WATER_LAYER = 1;
-const BASELINE_EPSILON = 0.0005;
-
-function isWetCell(flag, need, offset) {
-  if (flag & FLAG_OUT) return false;
-  if (flag & 2) return true;
-  return Math.abs(offset) < BASELINE_EPSILON ? !!(flag & 1) : offset >= need;
-}
 
 // Agent analysis excludes permanent sea and outside-footprint cells. Keep the
 // presentation renderer's sea behavior separate so region ids match the host's
 // deterministic flood-analysis index exactly.
 function isAgentFloodCell(flag, need, offset) {
-  if (flag & FLAG_OUT || flag & 2) return false;
-  return Math.abs(offset) < BASELINE_EPSILON ? !!(flag & 1) : offset >= need;
+  return !(flag & 2) && isWetCell(flag, need, offset);
 }
 const QUALITY = {
   high:   { stride: 1, water: [896, 832], dpr: 2.0 },
@@ -198,6 +191,8 @@ let terrainGroup, terrainMesh, waterMesh, waterMat;
 let lastT = 0, elapsed = 0, statsTimer = 0, needStats = true, statsQuery = null;
 let tour = null;
 let pointerStart = null;
+let selectedQueryPoint = null;
+let contextFloodDirty = false;
 let hoverNdc = null, hoverActive = false;
 let hoverStrength = 0;
 let hoverMask = null, hoverMaskTex = null, hoverQueue = null;
@@ -300,6 +295,7 @@ async function init() {
       state,
       onProgress: (frac, label) => setStatus(`Loading ${label} layer`, 0.90 + frac * 0.05),
     });
+    ui.setPopulationMeta(contextLayers.data.population);
   } catch (err) {
     // The terrain viewer remains useful if a static context snapshot is absent or
     // blocked by a partial deployment. Keep the failure visible in the console,
@@ -640,6 +636,12 @@ function animate() {
 }
 
 function render() {
+  // Slider events can arrive several times before a frame. Only the latest
+  // offset needs a context recolour, including when exporting a screenshot.
+  if (contextFloodDirty && contextLayers) {
+    contextLayers.updateFloodState(dataset, state);
+    contextFloodDirty = false;
+  }
   if (waterMat) {
     waterMat.uniforms.uCameraNear.value = camera.near;
     waterMat.uniforms.uCameraFar.value = camera.far;
@@ -814,7 +816,8 @@ function onChange(key, value) {
       needStats = true;
       hoverMaskOffset = NaN;
       syncUniforms();
-      if (contextLayers) contextLayers.updateFloodState(dataset, state);
+      contextFloodDirty = true;
+      updateSelectedQuery(false);
       break;
     case 'showBuildings': case 'showRoads': case 'showOsmWater': case 'showPopulation':
       if (contextLayers) contextLayers.setVisibility(key, value);
@@ -826,6 +829,7 @@ function onChange(key, value) {
 
 function onAction(name) {
   switch (name) {
+    case 'clearQuery': selectedQueryPoint = null; break;
     case 'screenshot': saveScreenshot(); break;
     case 'resetView': frameToFlood(); break;
     case 'topView': topView(); break;
@@ -1191,23 +1195,13 @@ function onPointerUp(ev) {
   const p = pickSurface(ndc);
   if (!p) { ui.setQuery(null); return; }
 
-  const { arrays, grid, meta } = dataset;
-  const flag = sampleNearest(arrays.flags, grid.nx, grid.ny, grid.EW, grid.EH, p.x, p.z);
-  if (flag & FLAG_OUT) { ui.setQuery(null); return; }
-  const ground = sampleRaster(arrays.terrain, grid.nx, grid.ny, grid.EW, grid.EH, p.x, p.z);
-  const need = sampleRaster(arrays.need, grid.nx, grid.ny, grid.EW, grid.EH, p.x, p.z);
-  const ws = meta.wsurfGrid;
-  const W = sampleRaster(arrays.wsurf, ws.nx, ws.ny, grid.EW, grid.EH, p.x, p.z);
-  const isSea = !!(flag & 2);
-  const surface = isSea ? state.waterOffset * 0 : W + state.waterOffset;
-  const wet = isWetCell(flag, need, state.waterOffset) && (isSea || surface > ground);
-  const { lon, lat } = worldToLonLat(meta, p.x, p.z);
-  ui.setQuery({
-    lon, lat, x: p.x, z: p.z,
-    ground,
-    waterSurface: wet ? surface : null,
-    depth: wet ? Math.max(0, surface - ground) : 0,
-    sea: isSea,
-    observed: !!(flag & 1),
-  });
+  selectedQueryPoint = { x: p.x, z: p.z };
+  updateSelectedQuery(true);
+}
+
+function updateSelectedQuery(reveal) {
+  if (!selectedQueryPoint) return;
+  const { x, z } = selectedQueryPoint;
+  const query = queryFloodDepth(dataset, x, z, state.waterOffset);
+  ui.setQuery(query ? { ...query, ...worldToLonLat(dataset.meta, x, z) } : null, { reveal });
 }

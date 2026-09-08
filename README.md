@@ -33,8 +33,10 @@ The optional context layers use:
   using the local `GBA.ODbLPolygon` + `GBA.LoD1` snapshot;
 * roads and waterways from [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)
   via Overpass;
-* population density from [ABS 2021 Census Mesh Block Counts](https://www.abs.gov.au/census/guide-census-data/mesh-block-counts/latest-release)
-  joined to [ASGS 2021 Mesh Block boundaries](https://geo.abs.gov.au/arcgis/rest/services/ASGS2021/MB/MapServer).
+* population density from [WorldPop Global2 R2025A v1](https://hub.worldpop.org/geodata/listing?id=135),
+  using Australia's 2021 constrained estimates on the native 3-arcsecond grid
+  (approximately 100 m at the equator), clipped to Kempsey. These are modelled
+  residents, not observed occupants or real-time presence.
 
 See [README_3D.md](README_3D.md) for processing details, snapshot metadata, attribution and
 licensing notes.

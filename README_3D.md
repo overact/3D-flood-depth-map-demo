@@ -104,9 +104,9 @@ overlays are:
 * GlobalBuildingAtlas (GBA) LoD1 building footprints and source-provided heights, rebased
   to the same local EPSG:3857 scene coordinates as the flood rasters.
 * OpenStreetMap roads and waterways, rebased to the same local EPSG:3857 scene coordinates.
-* ABS 2021 Census Mesh Block polygons coloured by people per km² (log-scaled so both rural
-  and town areas remain readable). Mesh Blocks are finer than SA1s and use the official
-  `Persons Usually Resident` count joined by `MB_CODE_2021`.
+* WorldPop Global2 2021 constrained population estimates on native 3-arcsecond cells,
+  coloured by people per km² on a logarithmic scale. Counts use all ages and sexes;
+  density uses WGS84 ellipsoidal cell area.
 
 All context geometries are clipped to the exact display extent after download. The current
 Kempsey snapshot contains **21,497** building footprints from `GBA.ODbLPolygon`, joined with
@@ -138,14 +138,35 @@ replacement flag is given. The road snapshot keeps OSM `width`, `lanes`, `surfac
 surfaces receive a separate cartographic colour. `bridge=yes` is raised by a small display-only
 offset because OSM does not provide a surveyed bridge deck elevation in this snapshot.
 
-To refresh the finer population layer, run the helper below. It combines the official ABS
-2021 Census Mesh Block Counts workbook with the official ASGS 2021 Mesh Block boundary
-service, then writes only the current scene extent:
+The default population layer is **WorldPop Global2 R2025A v1, Australia, 2021**,
+the constrained all-ages/all-sexes population count grid. Native 3-arcsecond cells
+are retained; density uses WGS84 ellipsoidal cell area, not Web Mercator area.
+Positive cells are clipped to the viewer bounding rectangle, with edge counts
+allocated by clipped area. Zero and NoData are transparent and counted separately
+in metadata. These are modelled residents, not observed occupants or real-time
+presence. The publisher labels R2025A as an alpha release.
+
+Refresh with Python and `tools/requirements-population.txt` dependencies:
 
 ```text
-python tools/fetch_meshblock_population.py
+python tools/fetch_worldpop_population.py
 ```
 
+The helper reads only Kempsey through the official FTP service because the tested
+HTTP service ignored range requests. The roughly 113 KB GeoTIFF crop and its
+receipt remain in ignored `.tmp/`. The published
+`data/layers/population_worldpop_2021.json` uses compact cell indices and shared
+coordinate edges (about 723 KB). It records source URL, release, native grid,
+source size/modification time, crop SHA-256, and processing assumptions.
+`manifest.json` selects the active file and records its SHA-256. The map and legend
+share a Viridis-like ramp on a log1p density scale, visible with Population density.
+
+Run `python tests/test_worldpop.py` and `node tests/population.test.mjs` to check
+masking, count conservation, clipped edges, grid decoding, and colour scale. The
+browser-depth regression also checks the WorldPop overlay and desktop/mobile legend.
+
+The previous ABS Mesh Block snapshot and its acquisition script are retained as
+historical comparators; WorldPop is the active population source.
 For the legacy SA1 layer, use `node tools/fetch_context_layers.mjs --refresh-sa1-population`.
 To deliberately replace the GBA building snapshot with OSM-estimated buildings, use
 `node tools/fetch_context_layers.mjs --refresh-osm-buildings`.
@@ -156,14 +177,14 @@ then run `tools/fetch_gba_buildings.mjs` with the three local paths. The script 
 does not use the GBA WFS for automated or bulk extraction; the official release is the
 reproducible source for this static snapshot.
 
-The ABS Mesh Block boundary service is [ABS ASGS2021 MB](https://geo.abs.gov.au/arcgis/rest/services/ASGS2021/MB/MapServer),
-and the population counts are from [Census Mesh Block Counts, 2021](https://www.abs.gov.au/census/guide-census-data/mesh-block-counts/latest-release).
-The population layer intentionally uses **ASGS 2021** boundaries because the counts are from
-the 2021 Census; it is not intended to represent the newer ASGS Edition 4 geography. Each
-Mesh Block receives one areal density value, so this is not a building-level population
-estimate or a fine population raster; zero-population roads, parks, water and industrial
-blocks are retained where ABS supplies them.
-Both ABS sources are released under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+WorldPop: [official catalog](https://hub.worldpop.org/geodata/listing?id=135),
+[2021 Australia files](https://data.worldpop.org/GIS/Population/Global_2015_2030/R2025A/2021/AUS/v1/100m/constrained/),
+DOI [10.5258/SOTON/WP00839](https://doi.org/10.5258/SOTON/WP00839),
+WorldPop / University of Southampton, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+The historical ABS comparator uses
+[ASGS2021 MB boundaries](https://geo.abs.gov.au/arcgis/rest/services/ASGS2021/MB/MapServer)
+and [Census Mesh Block Counts, 2021](https://www.abs.gov.au/census/guide-census-data/mesh-block-counts/2021),
+also CC BY 4.0.
 GBA.LoD1 is [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/), and the
 GBA.ODbLPolygon footprint component is [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/).
 OSM roads/water are © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)
@@ -275,6 +296,29 @@ It divides out the renderer exposure so the pixels leave the pipeline at the pub
 values, which makes it usable for figures.
 
 ## Running it
+
+### Depth-query regression checks
+
+`js/flood-depth.js` owns the viewer's quantitative point and context-feature
+depth reconstruction. Published-wet cells use `offset - need`; scenario-only
+cells use the connectivity threshold and the coarse-surface lower bound. Sea
+stays at AHD zero; outside-footprint and NoData queries return `null`. Reported
+water-surface elevation is ground plus quantitative depth. The animated coarse
+mesh remains a presentation surface used for ray picking, not a depth source.
+
+Selected queries refresh when the water level changes. Closing a query clears
+the selection, and background refresh does not change the active mobile tab.
+Context features cache offset-independent samples for the immutable dataset and
+geometry; dataset replacement or geometry rebuilding clears the cache. Slider
+events are coalesced at render, and unchanged feature colours skip buffer writes.
+
+Run `node tests/flood-depth.test.mjs` (Node 22+) for the numerical regressions.
+With the viewer served below, Python Playwright and Google Chrome installed, run
+`python3 tests/browser-depth.py http://127.0.0.1:8000` for real-raster parity,
+selected-point refresh, cache invalidation, event coalescing and mobile-tab checks.
+Screenshots and the machine-readable result go to ignored `output/depth-regression/`.
+
+### Local server
 
 It is a static folder — no build step. ES modules need a real origin, so open it through a
 server rather than `file://`:

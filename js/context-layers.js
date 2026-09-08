@@ -8,14 +8,17 @@
  */
 
 import * as THREE from 'three';
-import { sampleNearest, sampleRaster } from './data.js';
+import { sampleRaster } from './data.js';
+import { prepareFloodSample, floodDepthAtSample, queryFloodDepth } from './flood-depth.js';
+import { populationColor } from './population-style.js';
+import { populationFeatures } from './population-grid.js';
 
 const LAYER = 0;
 const DEFAULT_FILES = {
   buildings: 'buildings.json',
   roads: 'roads.json',
   water: 'water.json',
-  population: 'population_meshblock.json',
+  population: 'population_worldpop_2021.json',
 };
 
 const ROAD_WIDTH = {
@@ -96,13 +99,6 @@ function colorForFlood(base, depth, wetFraction = 0) {
   return base.clone().lerp(wet, 0.42 + t * 0.45);
 }
 
-function populationColor(density, maxDensity) {
-  // Log scaling keeps rural Mesh Blocks visible while retaining contrast in
-  // the town centre, where a linear ramp would collapse everything to one colour.
-  const t = clamp(Math.log1p(Math.max(0, density)) / Math.log1p(Math.max(1, maxDensity)), 0, 1);
-  return new THREE.Color().setHSL(0.78 - 0.76 * t, 0.72, 0.54);
-}
-
 function triangulate(contour, holes = []) {
   if (contour.length < 3) return [];
   const shape = contour.map((p) => new THREE.Vector2(p[0], p[1]));
@@ -119,17 +115,7 @@ function triangulate(contour, holes = []) {
 }
 
 function roadFloodSample(layer, line) {
-  let max = 0;
-  let sum = 0;
-  let wet = 0;
-  for (const p of line) {
-    const d = layer.floodDepthAt(p[0], p[1]);
-    max = Math.max(max, d);
-    sum += d;
-    if (d > 0.05) wet++;
-  }
-  return { maxDepth: max, meanDepth: line.length ? sum / line.length : 0,
-    wetFraction: line.length ? wet / line.length : 0 };
+  return layer.sampleFeatureFlood(line, false);
 }
 
 function roadGroundAt(layer, feature, x, z, baseOffset) {
@@ -147,23 +133,7 @@ function roadGroundAt(layer, feature, x, z, baseOffset) {
 }
 
 function featureFloodSample(layer, ring) {
-  const points = stripClosingPoint(ring);
-  if (!points.length) return { maxDepth: 0, meanDepth: 0, wetFraction: 0 };
-  const samples = points.length > 12
-    ? points.filter((_, i) => i % Math.ceil(points.length / 12) === 0)
-    : points;
-  samples.push(averagePoint(points));
-  let max = 0;
-  let sum = 0;
-  let wet = 0;
-  for (const p of samples) {
-    const d = layer.floodDepthAt(p[0], p[1]);
-    max = Math.max(max, d);
-    sum += d;
-    if (d > 0.05) wet++;
-  }
-  return { maxDepth: max, meanDepth: sum / samples.length,
-    wetFraction: wet / samples.length };
+  return layer.sampleFeatureFlood(ring, true);
 }
 
 function ribbonGeometry(features, layer, widthFor, yOffset, colorFor, closed = false) {
@@ -429,6 +399,9 @@ export class ContextLayers {
     this.data = {};
     this.loaded = false;
     this.farMode = false;
+    this.floodSamples = new WeakMap();
+    this.floodSampleDataset = dataset;
+    this.floodOffset = NaN;
     this.group.scale.y = Number.isFinite(this.state.vertExag) ? this.state.vertExag : 8;
     if (scene) scene.add(this.group);
   }
@@ -445,6 +418,7 @@ export class ContextLayers {
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
       this.data[key] = await this.fetchJson('./data/layers/' + files[key], dataVersion);
+      if (key === 'population') this.data[key].features = populationFeatures(this.data[key]);
       this.onProgress((i + 1) / keys.length, key);
     }
     this.build();
@@ -467,21 +441,44 @@ export class ContextLayers {
   }
 
   floodDepthAt(x, z) {
-    const { arrays, grid, meta } = this.dataset;
-    const [sx, sz] = clampRasterPoint(grid.nx, grid.ny, grid.EW, grid.EH, x, z);
-    const ws = meta.wsurfGrid;
-    const [wx, wz] = clampRasterPoint(ws.nx, ws.ny, grid.EW, grid.EH, x, z);
-    const flag = sampleNearest(arrays.flags, grid.nx, grid.ny, grid.EW, grid.EH, sx, sz);
-    if (flag & 4) return 0;
-    const ground = sampleRaster(arrays.terrain, grid.nx, grid.ny, grid.EW, grid.EH, sx, sz);
-    if (!Number.isFinite(ground)) return 0;
-    const offset = Number(this.state.waterOffset) || 0;
-    if (flag & 2) return Math.max(0, -ground);
-    const need = sampleRaster(arrays.need, grid.nx, grid.ny, grid.EW, grid.EH, sx, sz);
-    const wet = Math.abs(offset) < 0.0005 ? !!(flag & 1) : offset >= need;
-    if (!wet) return 0;
-    const surface = sampleRaster(arrays.wsurf, ws.nx, ws.ny, grid.EW, grid.EH, wx, wz) + offset;
-    return Number.isFinite(surface) ? Math.max(0, surface - ground) : 0;
+    return queryFloodDepth(this.dataset, x, z, this.state.waterOffset)?.depth ?? null;
+  }
+
+  sampleFeatureFlood(coordinates, building) {
+    // Geometry is fixed during a water-level drag. Reuse raster interpolation,
+    // vertex selection and the building centre; only offset arithmetic remains.
+    if (this.floodSampleDataset !== this.dataset) {
+      this.floodSamples = new WeakMap();
+      this.floodSampleDataset = this.dataset;
+      this.floodOffset = NaN;
+    }
+    let cached = this.floodSamples.get(coordinates);
+    if (!cached) {
+      let points = coordinates;
+      if (building) {
+        const ring = stripClosingPoint(coordinates);
+        points = ring.length > 12
+          ? ring.filter((_, i) => i % Math.ceil(ring.length / 12) === 0)
+          : ring.slice();
+        if (ring.length) points.push(averagePoint(ring));
+      }
+      cached = { samples: points.map(([x, z]) => prepareFloodSample(this.dataset, x, z)), offset: NaN };
+      this.floodSamples.set(coordinates, cached);
+    }
+    const offset = this.state.waterOffset;
+    if (cached.offset === offset) return cached.result;
+    let max = 0, sum = 0, wet = 0;
+    for (const sample of cached.samples) {
+      const depth = floodDepthAtSample(sample, offset) ?? 0;
+      max = Math.max(max, depth);
+      sum += depth;
+      if (depth > 0.05) wet++;
+    }
+    const count = cached.samples.length;
+    cached.offset = offset;
+    cached.result = { maxDepth: max, meanDepth: count ? sum / count : 0,
+      wetFraction: count ? wet / count : 0 };
+    return cached.result;
   }
 
   build() {
@@ -573,11 +570,12 @@ export class ContextLayers {
     this.records.water = { polygons: w.records, lines: wl.records };
 
     const popFeatures = this.data.population?.features || [];
-    const maxDensity = popFeatures.reduce((m, f) => Math.max(m, Number(f.density) || 0), 0);
+    const maxDensity = this.data.population?.display?.legendMax
+      || popFeatures.reduce((m, f) => Math.max(m, Number(f.density) || 0), 0);
     const p = polygonGeometry(popFeatures, this,
-      (feature) => populationColor(Number(feature.density) || 0, maxDensity), 0.32, true);
+      (feature) => new THREE.Color(populationColor(Number(feature.density) || 0, maxDensity)), 0.32, true);
     const population = new THREE.Mesh(p.geometry, makeMaterial('population'));
-    population.name = 'ABS 2021 Mesh Block population density';
+    population.name = `${this.data.population?.source || 'Population'} · ${this.data.population?.year || ''} density`;
     population.layers.set(LAYER);
     population.renderOrder = 0;
     population.frustumCulled = false;
@@ -596,11 +594,15 @@ export class ContextLayers {
   }
 
   updateFloodState(dataset = this.dataset, state = this.state) {
+    const unchanged = dataset === this.floodSampleDataset && this.floodOffset === state.waterOffset;
     this.dataset = dataset;
     this.state = state || this.state;
     this.setVerticalExaggeration(this.state.vertExag);
-    this.updateRecords('buildings', this.records.buildings, 0xe2a654);
-    this.updateRecords('roads', this.records.roads, 0xdde5ea);
+    if (!unchanged) {
+      this.updateRecords('buildings', this.records.buildings, 0xe2a654);
+      this.updateRecords('roads', this.records.roads, 0xdde5ea);
+      this.floodOffset = this.state.waterOffset;
+    }
     this.applyLod();
   }
 
@@ -613,10 +615,15 @@ export class ContextLayers {
       ? this.objects.buildingOverview?.geometry?.getAttribute('color')
       : null;
     const fallbackBase = new THREE.Color(baseHex);
+    let changed = false;
     for (const record of records || []) {
       const flood = kind === 'buildings'
         ? featureFloodSample(this, record.ring)
         : roadFloodSample(this, record.line || []);
+      const previous = record.flood;
+      record.flood = flood;
+      if (previous && previous.maxDepth === flood.maxDepth && previous.wetFraction === flood.wetFraction) continue;
+      changed = true;
       const base = kind === 'roads' && record.baseColor ? record.baseColor : fallbackBase;
       const color = colorForFlood(base, flood.maxDepth, flood.wetFraction);
       for (let i = record.start; i < record.start + record.count; i++) {
@@ -626,8 +633,10 @@ export class ContextLayers {
         overviewAttr.setXYZ(record.overviewIndex, color.r, color.g, color.b);
       }
     }
-    attr.needsUpdate = true;
-    if (overviewAttr) overviewAttr.needsUpdate = true;
+    if (changed) {
+      attr.needsUpdate = true;
+      if (overviewAttr) overviewAttr.needsUpdate = true;
+    }
   }
 
   setVisibility(key, visible) {
@@ -682,6 +691,9 @@ export class ContextLayers {
   }
 
   disposeObjects() {
+    this.floodSamples = new WeakMap();
+    this.floodSampleDataset = this.dataset;
+    this.floodOffset = NaN;
     for (const child of [...this.group.children]) {
       child.traverse((object) => {
         if (object.geometry) object.geometry.dispose();
